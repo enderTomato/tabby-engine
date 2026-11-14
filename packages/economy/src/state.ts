@@ -27,6 +27,10 @@ export class EconomyState {
   /** 0..1，受维护费未付、输入短缺影响。低于 0.3 视为停摆。 */
   readonly buildingEfficiency: Float32Array;
 
+  /**
+   * 每城市人口。**允许小数**：日增量常小于 1（小城市 8 人时约 0.29/天），
+   * 取整会把增长完全吃掉。展示层自己 round，内核只管算准。
+   */
   readonly cityPopulation: Float32Array;
   readonly cityTaxRate: Float32Array;
   readonly citySatisfaction: Float32Array;

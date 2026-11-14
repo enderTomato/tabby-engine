@@ -8,26 +8,32 @@ import { gsap } from 'gsap';
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import {
   CELL_COLOR,
+  CELL_HEIGHT,
   CELL_SIZE,
-  COSTS,
   GRID_COLS,
   GRID_ROWS,
-  TOOL_LABEL,
   TOWER,
   WORLD_MIN_X,
-  WORLD_MIN_Y,
-  applyTool,
-  cellAt,
+  cellFromWorld,
   cellRect,
-  createCity,
   obstaclesOf,
+  zSpanOf,
   zonesOf,
-  type CityState,
-  type ToolKind,
 } from './game/city';
+import { CitySimulation, TOOLS, TOOL_LABEL, costOf, type ToolKind } from './game/simulation';
 
 const BOUNDS: PhysicsBounds = { min: { x: -14, y: 0, z: -6 }, max: { x: 14, y: 16, z: 6 } };
-const TOOLS: readonly ToolKind[] = ['house', 'farm', 'wall', 'remove'];
+
+/**
+ * 水塔浇灌的列。水塔本体在 x=-13.6，只能浇到它右侧这几列。
+ *
+ * 为什么是三个点轮流出水而不是一股：`spawnFluid` 只支持位置抖动，给不了水平初速，
+ * 一股水永远是垂直下落，只能浇到正下方一格。三个点让喷淋覆盖 col 0~2，
+ * 玩家的农田摆在这一带才有收成 —— 这是物理约束下的取舍，不是喷泉美术。
+ */
+const WATER_COLS: readonly number[] = [0, 1, 2];
+/** 喷淋落到第几行。种子农田就在这一行，玩家挪走农田后就得自己把新田摆回来。 */
+const FARM_ROW = 3;
 
 const stageEl = ref<HTMLDivElement | null>(null);
 const canvas2d = ref<HTMLCanvasElement | null>(null);
@@ -35,10 +41,20 @@ const canvas3d = ref<HTMLCanvasElement | null>(null);
 
 const mode = ref<'2d' | '3d'>('2d');
 const tool = ref<ToolKind>('house');
-const city = reactive<CityState>(createCity());
+const speed = ref<1 | 2 | 4>(2);
 const toast = ref('欢迎来到 Tabby Engine 测试用例');
 const showDiag = ref(false);
 const diagText = ref('');
+
+/**
+ * 仿真层在 setup 顶层构造：它不碰 DOM，只跑经济内核的构造与种子放置。
+ * **不要**把它塞进 Vue 的 reactive —— 内核内部是几十个 TypedArray，
+ * 包上 Proxy 之后每次 `state.cityTreasury[i]` 都会走一层拦截，
+ * 而结算每帧要访问上万次。这里只把「要显示的字段」同步进 hud。
+ */
+const sim = new CitySimulation(0);
+
+const hud = reactive({ ...sim.hud() });
 
 const stats = reactive({
   fps: 0,
@@ -58,21 +74,20 @@ let resizeObserver: ResizeObserver | null = null;
 let frameCounter = 0;
 
 let waterTimer = 0;
+let waterSeq = 0;
 let smokeTimer = 0;
-let economyTimer = 0;
 let pendulumTimer = 0;
-let absorbedTotal = 0;
 let ragdollSeq = 0;
 const ragdollIds: string[] = [];
 let prevZones: number[] = [];
 
+const pct = (value: number): string => `${Math.round(value * 100)}%`;
+
 const hint = computed(() =>
   mode.value === '2d'
-    ? `点击网格建造${TOOL_LABEL[tool.value]}（${COSTS[tool.value]} 金币），挡板可以把水导进农田`
+    ? `点击网格建造${TOOL_LABEL[tool.value]}（${costOf(tool.value)} 金币）；水塔会浇灌靠左的农田，挡板能挡住水流`
     : '拖拽旋转视角，滚轮缩放；点击地面丢一个布娃娃',
 );
-
-const coins = computed(() => Math.floor(city.coins));
 
 function flash(message: string): void {
   toast.value = message;
@@ -81,14 +96,15 @@ function flash(message: string): void {
   }, 1800);
 }
 
+function refreshHud(): void {
+  Object.assign(hud, sim.hud());
+}
+
 function cellFromPointer(event: PointerEvent): { col: number; row: number } | null {
   if (view2d === null || canvas2d.value === null) return null;
   const rect = canvas2d.value.getBoundingClientRect();
   const world = view2d.screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
-  const col = Math.floor((world.x - WORLD_MIN_X) / CELL_SIZE);
-  const row = Math.floor((world.y - WORLD_MIN_Y) / CELL_SIZE);
-  if (col < 0 || col >= GRID_COLS || row < 0 || row >= GRID_ROWS) return null;
-  return { col, row };
+  return cellFromWorld(world.x, world.y);
 }
 
 function onPointerMove2D(event: PointerEvent): void {
@@ -99,25 +115,24 @@ function onPointerMove2D(event: PointerEvent): void {
     return;
   }
   const rect = cellRect(cell.col, cell.row);
-  const kind = cellAt(city, cell.col, cell.row);
+  const occupied = sim.cellAt(cell.col, cell.row) !== 0;
   view2d.setHighlight({
     x: rect.x,
     y: rect.y,
     width: rect.width,
     height: rect.height,
-    color: tool.value === 'remove' ? 0xff6b6b : kind === 'empty' ? 0x8de1ff : 0xffd166,
+    color: tool.value === 'remove' ? 0xff6b6b : occupied ? 0xffd166 : 0x8de1ff,
   });
 }
 
 function onPointerDown2D(event: PointerEvent): void {
   const cell = cellFromPointer(event);
   if (cell === null) return;
-  const result = applyTool(city, cell.col, cell.row, tool.value);
+  const result = sim.build(cell.col, cell.row, tool.value);
   flash(result.message);
-  if (result.ok) {
-    city.cells = [...city.cells];
-    syncCity();
-  }
+  if (!result.ok) return;
+  refreshHud();
+  syncCity();
 }
 
 function onPointerDown3D(event: PointerEvent): void {
@@ -126,8 +141,9 @@ function onPointerDown3D(event: PointerEvent): void {
   if (rect === undefined) return;
   const nx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   const nz = ((event.clientY - rect.top) / rect.height) * 2 - 1;
-  const x = nx * 10;
-  const z = nz * 8;
+  // 限制在物理世界内（z 边界 ±6），否则布娃娃会生成在界外直接掉出去
+  const x = nx * 12;
+  const z = nz * 5;
   ragdollSeq += 1;
   const id = `rag-${ragdollSeq}`;
   const ragdoll = engine.world.spawnHumanoid(id, x, 12, z, 1);
@@ -144,9 +160,12 @@ function drawBox2D(spec: BoxSpec): void {
   view2d?.upsertBox(`${spec.x.toFixed(2)}:${spec.y.toFixed(2)}`, spec);
 }
 
+/** 把投影重建成渲染几何。只在格子变化 / 切模式 / 读档时调用，不进每帧路径。 */
 function syncCity(): void {
   if (engine === null || view2d === null || view3d === null) return;
-  engine.setStaticGeometry(obstaclesOf(city), zonesOf(city));
+  const cells = sim.cells;
+  const zones = zonesOf(cells);
+  engine.setStaticGeometry(obstaclesOf(cells), zones);
 
   view2d.clearBoxes();
   drawBox2D({
@@ -159,32 +178,32 @@ function syncCity(): void {
 
   const specs3d: Box3DSpec[] = [
     { id: 'tower', x: TOWER.x, y: 0, z: 1.2, width: TOWER.width, height: TOWER.height, depth: 2.4, color: 0x3f7ec9 },
-    { id: 'mill-pole', x: 8.1, y: 0, z: -9, width: 0.8, height: 6.2, depth: 0.8, color: 0x556377 },
+    { id: 'mill-pole', x: 8.1, y: 0, z: -5.6, width: 0.8, height: 6.2, depth: 0.8, color: 0x556377 },
   ];
   drawBox2D({ x: 8.1, y: 0, width: 0.8, height: 6.2, color: 0x556377 });
 
   for (let row = 0; row < GRID_ROWS; row += 1) {
     for (let col = 0; col < GRID_COLS; col += 1) {
-      const kind = cellAt(city, col, row);
-      if (kind === 'empty') continue;
+      const kind = sim.cellAt(col, row);
+      if (kind === 0) continue;
       const rect = cellRect(col, row);
-      const height = kind === 'wall' ? 2 : kind === 'farm' ? 1.2 : CELL_SIZE;
-      drawBox2D({ x: rect.x, y: rect.y, width: rect.width, height, color: CELL_COLOR[kind] });
-      // 2D 的 rect.y 是"行"纵深，3D 里必须落到 z 轴；直接当 y 用会让建筑悬空。
+      const height = CELL_HEIGHT[kind] ?? CELL_SIZE;
+      drawBox2D({ x: rect.x, y: rect.y, width: rect.width, height, color: CELL_COLOR[kind] ?? 0xffffff });
+      // 2D 的 rect.y 是「行纵深」，3D 里必须落到 z 轴；直接当 y 用会让建筑悬空
       specs3d.push({
         id: `cell-${col}-${row}`,
         x: rect.x,
         y: 0,
-        z: -4 + row * CELL_SIZE,
+        z: zSpanOf(row).min,
         width: rect.width * 0.94,
         height,
         depth: CELL_SIZE * 0.94,
-        color: CELL_COLOR[kind],
+        color: CELL_COLOR[kind] ?? 0xffffff,
       });
     }
   }
   view3d.setBoxes(specs3d);
-  prevZones = new Array<number>(zonesOf(city).length).fill(0);
+  prevZones = new Array<number>(zones.length).fill(0);
 }
 
 function setMode(next: '2d' | '3d'): void {
@@ -197,7 +216,12 @@ function setMode(next: '2d' | '3d'): void {
   engine?.setActiveView(target);
 }
 
-/** 每固定步调用：水塔出水、烟囱冒烟、经济结算。 */
+function setSpeed(next: 1 | 2 | 4): void {
+  speed.value = next;
+  sim.setSpeed(next);
+}
+
+/** 每固定步调用：水塔出水、烟囱冒烟、灌溉结算、经济结算。 */
 function onFixed(dt: number): void {
   if (engine === null) return;
 
@@ -206,22 +230,34 @@ function onFixed(dt: number): void {
     waterTimer = 0;
     const capacity = engine.profile.fluidParticles;
     if (engine.fluidCount < capacity * 0.82) {
-      engine.spawnFluid(3, TOWER.x + TOWER.width + 0.55, TOWER.height - 0.6, 0, 0.45);
+      const col = WATER_COLS[waterSeq % WATER_COLS.length] ?? 0;
+      waterSeq += 1;
+      const z = zSpanOf(FARM_ROW);
+      engine.spawnFluid(
+        2,
+        WORLD_MIN_X + col * CELL_SIZE + CELL_SIZE / 2,
+        TOWER.height - 0.6,
+        (z.min + z.max) / 2,
+        0.3,
+      );
     }
   }
 
   smokeTimer += dt;
-  if (smokeTimer >= 0.4) {
+  // 1 秒一股、每股 1 粒：5 栋住宅时屏上稳定十几粒。
+  // 曾经是 0.4 秒 2 粒，2D 视角下烟雾糊成一片，把建筑本身挡住 —— 视觉效果比"信息量"重要。
+  if (smokeTimer >= 1) {
     smokeTimer = 0;
     for (let col = 0; col < GRID_COLS; col += 1) {
       for (let row = 0; row < GRID_ROWS; row += 1) {
-        if (cellAt(city, col, row) !== 'house') continue;
+        if (sim.cellAt(col, row) !== 1) continue;
         const rect = cellRect(col, row);
-        engine.world.smoke.emit(rect.x + 1, rect.y + CELL_SIZE + 0.2, 0, 2, 0.18);
+        engine.world.smoke.emit(rect.x + 1, rect.y + CELL_SIZE + 0.2, 0, 1, 0.3);
       }
     }
   }
 
+  // 吸收区计数是累计值，取增量而不是当前值 —— 直接传当前值会让灌溉收益随粒子数抖动
   const zones = engine.zoneCounts;
   let absorbed = 0;
   for (let i = 0; i < zones.length; i += 1) {
@@ -230,22 +266,11 @@ function onFixed(dt: number): void {
     absorbed += Math.max(0, current - previous);
     prevZones[i] = current;
   }
-  if (absorbed > 0) absorbedTotal += absorbed;
-  for (let i = 0; i < city.farmWater.length; i += 1) {
-    city.farmWater[i] = (city.farmWater[i] ?? 0) + absorbed / Math.max(1, city.farmWater.length);
-  }
+  if (absorbed > 0) sim.irrigate(absorbed);
 
-  economyTimer += dt;
-  if (economyTimer >= 1) {
-    economyTimer = 0;
-    city.coins += city.houses * 2;
-    while (absorbedTotal >= 25) {
-      absorbedTotal -= 25;
-      city.coins += 8;
-    }
-  }
+  // 经济内核的唯一时间入口。dt 是固定步长（1/60 秒），乘 1000 换成毫秒。
+  if (sim.advance(dt * 1000)) flash('月末结算：税收已入库');
 
-  // 风车：真实单摆驱动，能量不足时补一脚，避免停摆后画面像卡住
   pendulumTimer += dt;
   const mill = engine.world.getPendulum('mill');
   if (mill !== null && pendulumTimer >= 3) {
@@ -257,6 +282,7 @@ function onFixed(dt: number): void {
 function onFrame(): void {
   if (engine === null) return;
   frameCounter += 1;
+  // 6 帧一次 ≈ 10Hz：HUD 数字跳得太快反而读不清
   if (frameCounter % 6 !== 0) return;
   const s = engine.stats;
   stats.fps = s.fps;
@@ -266,7 +292,45 @@ function onFrame(): void {
   stats.draw = s.drawCallsHint;
   stats.mode = engine.host.mode;
   stats.tier = engine.tier;
-  if (showDiag.value) diagText.value = engine.getDiagnostics().report;
+  refreshHud();
+  if (showDiag.value) diagText.value = collectDiagnostics();
+}
+
+function collectDiagnostics(): string {
+  if (engine === null) return '引擎未就绪';
+  const d = sim.diagnostics();
+  const projection = sim.verifyProjection();
+  const h = sim.hud();
+  const priceNote = h.foodPrice <= 1.51 ? '（已触 0.3× 基准下限）' : '';
+  return [
+    engine.getDiagnostics().report,
+    '── 经济内核 ──',
+    `日期      ${d.year} 年 ${d.month} 月 ${d.day} 日 · tick ${d.tick}`,
+    `实体      ${d.aliveBuildings} 存活 / ${sim.economy.state.capacity} 上限`,
+    `人口      ${d.totalPopulation.toFixed(2)} · 住房 ${h.housing} · 岗位 ${h.jobs}`,
+    `产耗      食物 产 ${h.foodProduced.toFixed(1)} / 耗 ${h.foodConsumed.toFixed(1)} 每 tick`,
+    `粮价      ${d.prices.map((p) => p.toFixed(2)).join(' / ')}${priceNote}`,
+    `GDP       ${d.gdp.toFixed(1)} · 货币 ${d.moneySupply}`,
+    `膨胀指数  ${d.inflationRatio.toFixed(3)}`,
+    `日结算    ${d.lastDayMs.toFixed(3)} ms · 月结算 ${d.lastMonthMs.toFixed(3)} ms`,
+    `灌溉累计  ${sim.waterIncome} 金币`,
+    `投影自检  ${projection.ok ? '✓' : '✗'} ${projection.detail}`,
+  ].join('\n');
+}
+
+function saveGame(): void {
+  flash(sim.saveToStorage() ? '已存档到本地' : '存档失败（可能是隐私模式禁用了 localStorage）');
+}
+
+function loadGame(): void {
+  if (!sim.loadFromStorage()) {
+    flash('没有可用存档');
+    return;
+  }
+  // 读档是批量替换：投影已由 loadFromStorage 重建，这里只需刷新几何与 HUD
+  refreshHud();
+  syncCity();
+  flash('读档完成');
 }
 
 onMounted(async () => {
@@ -288,6 +352,9 @@ onMounted(async () => {
   (window as unknown as { __tabby?: Engine }).__tabby = engine;
   (window as unknown as { __tabby3d?: unknown }).__tabby3d = {
     debug: () => view3d?.debugInfo,
+    sim,
+    hud: () => sim.hud(),
+    projection: () => sim.verifyProjection(),
   };
   animation.attach(engine);
   engine.bus.on('fixed', ({ dt }) => onFixed(dt));
@@ -311,10 +378,12 @@ onMounted(async () => {
 
   engine.world.addPendulum('mill', { length: 2.4, gravity: 9.8, damping: 0.12, angle: 1.1 });
   view3d.bindSpinners([
-    { id: 'mill', pendulumId: 'mill', x: 8.5, y: 6.2, z: -8.6, radius: 2.4, thickness: 0.28, color: 0xd9a441 },
+    { id: 'mill', pendulumId: 'mill', x: 8.5, y: 6.2, z: -5.2, radius: 2.4, thickness: 0.28, color: 0xd9a441 },
   ]);
 
+  sim.setSpeed(speed.value);
   syncCity();
+  refreshHud();
   setMode('2d');
 
   canvas2d.value.addEventListener('pointermove', onPointerMove2D);
@@ -350,7 +419,6 @@ onBeforeUnmount(() => {
   view2d = null;
   view3d = null;
 });
-
 </script>
 
 <template>
@@ -390,24 +458,53 @@ onBeforeUnmount(() => {
       </div>
     </main>
 
-    <footer class="toolbar">
-      <div class="coins">
-        <span>💰</span>{{ coins }}
-        <small>房屋 {{ city.houses }} · 农田 {{ city.farms }}</small>
+    <footer class="dock">
+      <div class="statusbar">
+        <div class="coins">
+          <span>💰</span>
+          <b>{{ hud.treasury }}</b>
+        </div>
+        <ul class="readouts">
+          <li><em>日期</em>{{ hud.year }} 年 {{ hud.month }} 月 {{ hud.day }} 日</li>
+          <li><em>人口</em>{{ hud.population }} / {{ hud.housing }}</li>
+          <li><em>就业</em>{{ hud.employed }} / {{ hud.jobs }}</li>
+          <li :class="{ bad: hud.starving }"><em>满意</em>{{ pct(hud.satisfaction) }}</li>
+          <li><em>存粮</em>{{ hud.foodStock.toFixed(0) }} <small>产 {{ hud.foodProduced.toFixed(0) }}/日</small></li>
+          <li><em>灌溉</em>{{ hud.waterIncome }} <small>金币</small></li>
+          <li><em>建筑</em>房 {{ hud.houseCount }} · 田 {{ hud.farmCount }} · 墙 {{ hud.wallCount }}</li>
+        </ul>
       </div>
-      <div class="tools">
-        <button
-          v-for="item in TOOLS"
-          :key="item"
-          type="button"
-          :class="{ on: tool === item }"
-          @click="tool = item"
-        >
-          {{ TOOL_LABEL[item] }}
-          <small v-if="item !== 'remove'">{{ COSTS[item] }}</small>
-        </button>
+
+      <div class="toolbar">
+        <div class="tools">
+          <button
+            v-for="item in TOOLS"
+            :key="item"
+            type="button"
+            :class="{ on: tool === item }"
+            @click="tool = item"
+          >
+            {{ TOOL_LABEL[item] }}
+            <small v-if="item !== 'remove'">{{ costOf(item) }}</small>
+          </button>
+        </div>
+        <div class="speeds">
+          <button
+            v-for="level in [1, 2, 4] as const"
+            :key="level"
+            type="button"
+            :class="{ on: speed === level }"
+            @click="setSpeed(level)"
+          >
+            ×{{ level }}
+          </button>
+        </div>
+        <div class="saves">
+          <button type="button" @click="saveGame">存档</button>
+          <button type="button" @click="loadGame">读档</button>
+        </div>
+        <p class="hint">{{ hint }}</p>
       </div>
-      <p class="hint">{{ hint }}</p>
     </footer>
 
     <aside v-if="showDiag" class="diag">
