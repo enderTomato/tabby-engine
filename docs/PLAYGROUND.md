@@ -7,8 +7,13 @@
 ```bash
 pnpm --filter @tabby/playground dev      # http://localhost:5174
 pnpm --filter @tabby/playground build
+node apps/playground/dist/serve.mjs      # 构建产物自带服务器，会把 COOP/COEP 一起下发
 node tools/smoke-playground.mjs 4175     # 无头跑一遍：12 个探针逐个挂载 + 跑分
 ```
+
+`dist/serve.mjs` 读 `$PORT`、绑 `0.0.0.0`，所以既能本地跑也能直接丢到任何单端口平台上。
+`vite preview` 不做这件事 —— 它不带 COOP/COEP，`crossOriginIsolated` 为 false，
+解码器与 SharedArrayBuffer 会一起降级，跑出来的数不是这台机器的真实水平。
 
 ## 为什么不用 Vue
 
