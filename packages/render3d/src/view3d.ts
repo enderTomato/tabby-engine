@@ -2,8 +2,12 @@ import type { ViewAdapter, ViewContext, ViewFrame, Engine } from '@tabby/engine'
 import { SMOKE_STRIDE } from '@tabby/physics';
 import type { QualityProfile } from '@tabby/platform';
 import * as THREE from 'three';
+import { BuildingLodLayer } from './building-lod.js';
+import { ContextGuard } from './context-guard.js';
+import { DynamicResolution } from './drs.js';
 import { OrbitController } from './orbit.js';
 import { PointsLayer } from './points-layer.js';
+import { planShadows, type ShadowPlan } from './shadow-budget.js';
 
 export interface Box3DSpec {
   readonly id: string;
@@ -38,7 +42,19 @@ export interface Renderer3DViewOptions {
    * 两套都绑会让同一只手势被处理两遍。
    */
   readonly manageInput?: boolean;
+  /**
+   * KTX2 / DRACO 解码器的托管路径，默认 `./decoders/`（相对页面）。
+   *
+   * 为什么放在选项里而不是写死：解码器是**部署方托管**的静态文件，
+   * 引擎包无权决定人家把 CDN 挂在哪。写死相对路径的结果是——应用把解码器
+   * 放在 `/static/dec/` 或者另一个域名上，就只能眼睁睁看着 404，
+   * 而且报错发生在 `loadBuildingTexture()` 里，看上去像「纹理加载失败」。
+   */
+  readonly decoderPaths?: { readonly basis: string; readonly draco: string };
 }
+
+/** 解码器默认托管位置：与 `tools/copy-decoders.mjs` 的输出目录对齐。 */
+const DEFAULT_DECODER_PATHS = { basis: './decoders/', draco: './decoders/' } as const;
 
 const MAX_RAGDOLL_VERTS = 6 * 40 * 2;
 /** 关节点上限：36 个布娃娃 × 9 点，够用且固定分配。 */
@@ -78,11 +94,21 @@ export class Renderer3DView implements ViewAdapter {
   private boxes: THREE.InstancedMesh | null = null;
   private readonly spinners = new Map<string, { group: THREE.Group; pendulumId: string }>();
   private keyLight: THREE.DirectionalLight | null = null;
+  private farLight: THREE.DirectionalLight | null = null;
+  /** 建筑 LOD：近景实例化方盒 + 远景 billboard。 */
+  private buildings: BuildingLodLayer | null = null;
+  /** 动态分辨率。档位给的 `renderScale` 是上限，DRS 在上限内浮动。 */
+  private readonly drs: DynamicResolution = new DynamicResolution();
+  private guard: ContextGuard | null = null;
+  private shadows: ShadowPlan = { enabled: false, near: null, far: null, reason: '尚未初始化' };
+  /** 最近一帧的时间戳，DRS 用它算帧间隔。 */
+  private lastFrameAt = 0;
+  private dpr = 1;
+  private assetHost: import('@tabby/assets').ThreeAssetHost | null = null;
+  private textureError: string | null = null;
   private cssWidth = 1;
   private cssHeight = 1;
   private active = true;
-  private readonly matrix = new THREE.Matrix4();
-  private readonly color = new THREE.Color();
   private readonly ragdollScratch = new Float32Array(512);
   /** 关节点插值的临时缓冲，避免每帧 new。 */
   private readonly ragdollPointScratch = new Float32Array(128);
@@ -114,9 +140,12 @@ export class Renderer3DView implements ViewAdapter {
       stencil: false,
     });
     renderer.setClearColor(this.background, 1);
-    renderer.shadowMap.enabled = context.profile.shadowQuality !== 'off';
     renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer = renderer;
+
+    // DRS 的目标帧时间跟档位一致：低端机本来就跑 30fps，
+    // 用 16.7ms 当目标会让它一直判「太慢」然后降到底
+    this.drs.reset(1);
 
     const scene = new THREE.Scene();
     scene.fog = new THREE.Fog(this.background, 40, 80);
@@ -130,19 +159,10 @@ export class Renderer3DView implements ViewAdapter {
     scene.add(ambient);
     const keyLight = new THREE.DirectionalLight(0xffffff, 2.1);
     keyLight.position.set(12, 22, 10);
-    if (context.profile.shadowQuality !== 'off') {
-      keyLight.castShadow = true;
-      keyLight.shadow.mapSize.set(
-        context.profile.shadowQuality === 'high' ? 1024 : 512,
-        context.profile.shadowQuality === 'high' ? 1024 : 512,
-      );
-      keyLight.shadow.camera.left = -20;
-      keyLight.shadow.camera.right = 20;
-      keyLight.shadow.camera.top = 20;
-      keyLight.shadow.camera.bottom = -20;
-    }
     scene.add(keyLight);
     this.keyLight = keyLight;
+    // 阴影的具体参数不在 build 期写死，交给 applyShadows 按档位 + DRS 决定
+    this.applyShadows(planShadows(context.profile, 1));
 
     const grid = new THREE.GridHelper(32, 16, 0x1d3557, 0x122238);
     scene.add(grid);
@@ -193,26 +213,76 @@ export class Renderer3DView implements ViewAdapter {
     });
     scene.add(this.ragdollJoints.object);
 
+    this.buildings = new BuildingLodLayer({ enterNear: 26, exitNear: 30, maxDistance: 110 });
+    scene.add(this.buildings.object);
+
     this.orbit = new OrbitController(this.canvas, { manageInput: this.options.manageInput });
+
+    // 上下文丢失：冻结视图并等恢复。这里只做「不画」，
+    // 模拟的暂停由引擎侧订阅同一个事件（见 docs/ANDROID-DEPLOY.md）。
+    this.guard = new ContextGuard(this.canvas, {
+      onLost: () => {
+        this.lastFrameAt = 0;
+      },
+      onRestored: () => {
+        // 恢复后分辨率与样本都重新来过：之前的帧时间属于旧上下文，没有参考价值
+        this.drs.reset(this.drs.scale);
+        this.applyResolution();
+        this.lastFrameAt = 0;
+      },
+    });
+
     this.resize(this.cssWidth, this.cssHeight, context.caps.devicePixelRatio);
   }
 
   resize(width: number, height: number, dpr: number): void {
     this.cssWidth = Math.max(1, width);
     this.cssHeight = Math.max(1, height);
-    if (this.renderer === null || this.camera === null || this.profile === null) return;
-    const scale = this.profile.renderScale;
-    const resolution = Math.min(dpr, this.profile.maxPixelRatio);
-    this.renderer.setPixelRatio(resolution);
-    this.renderer.setSize(this.cssWidth * scale, this.cssHeight * scale, false);
+    this.dpr = dpr;
+    this.applyResolution();
+  }
+
+  /**
+   * 真的把分辨率推到 GPU 上。
+   *
+   * ## 为什么不用 `setPixelRatio` + `setSize(css × scale)`
+   *
+   * 那条路上「最终 drawing buffer 多大」要读者自己在脑子里乘三次
+   * （DPR × renderScale × pixelRatio），改一个参数就得重新推。
+   * 这里直接把目标缓冲尺寸算出来，`pixelRatio` 固定为 1，只有一处乘法。
+   *
+   * 顺带解决一个一直存在的小问题：点精灵的 `gl_PointSize` 是**设备像素**，
+   * 而之前的 `sizeScale` 只按 CSS 高度算，于是同一份场景在 DPR=3 的手机上
+   * 粒子看起来比桌面小三倍。现在按真实缓冲高度算，跨设备一致。
+   */
+  private applyResolution(): void {
+    const renderer = this.renderer;
+    const profile = this.profile;
+    const camera = this.camera;
+    if (renderer === null || profile === null || camera === null) return;
+
+    const ratio = Math.min(this.dpr, profile.maxPixelRatio) * profile.renderScale * this.drs.scale;
+    const bufferWidth = Math.max(1, Math.round(this.cssWidth * ratio));
+    const bufferHeight = Math.max(1, Math.round(this.cssHeight * ratio));
+
+    renderer.setPixelRatio(1);
+    renderer.setSize(bufferWidth, bufferHeight, false);
     this.canvas.style.width = '100%';
     this.canvas.style.height = '100%';
-    this.camera.aspect = this.cssWidth / this.cssHeight;
-    this.camera.updateProjectionMatrix();
-    const sizeScale = this.computeSizeScale() / scale;
+
+    camera.aspect = this.cssWidth / this.cssHeight;
+    camera.updateProjectionMatrix();
+
+    const sizeScale = this.computeSizeScale(bufferHeight);
     this.fluid?.setSizeScale(sizeScale);
     this.smoke?.setSizeScale(sizeScale);
     this.ragdollJoints?.setSizeScale(sizeScale);
+
+    // 分辨率一降，阴影也该跟着让路 —— 这里不做实时联动，等到下一次 DRS 调整时统一过一遍
+    const next = planShadows(profile, this.drs.scale);
+    if (next.near?.mapSize !== this.shadows.near?.mapSize || next.far?.mapSize !== this.shadows.far?.mapSize || next.enabled !== this.shadows.enabled) {
+      this.applyShadows(next);
+    }
   }
 
   /**
@@ -248,58 +318,138 @@ export class Renderer3DView implements ViewAdapter {
     if (!this.active) return;
     const { renderer, scene, camera, engine } = this;
     if (renderer === null || scene === null || camera === null || engine === null) return;
+    // 上下文丢了就别再往 GL 上写：这时候所有调用都是空转，还会刷一屏 INVALID_OPERATION
+    if (this.guard?.isLost === true) return;
 
+    const now = performance.now();
     // 惯性要用真实时间差，不能用固定步长（见 OrbitController.update 注释）
-    this.orbit?.update(performance.now());
+    this.orbit?.update(now);
     this.updateFluid(engine);
     this.updateSmoke(engine);
     this.updateRagdolls(engine, frame.alpha);
     this.updateSpinners(engine);
     this.orbit?.apply(camera);
+
+    // LOD 按相机位置更新。放在 render 之前、相机矩阵算好之后 ——
+    // 用上一帧的相机位置做分类会让快速转动时远近切换慢一帧，肉眼能看出来。
+    this.buildings?.update(camera.position.x, camera.position.z);
+
     renderer.render(scene, camera);
+
+    if (this.lastFrameAt > 0 && this.drs.push(now - this.lastFrameAt, now)) {
+      this.applyResolution();
+    }
+    this.lastFrameAt = now;
   }
 
   applyProfile(profile: QualityProfile): void {
     this.profile = profile;
-    if (this.renderer !== null) {
-      this.renderer.shadowMap.enabled = profile.shadowQuality !== 'off';
-      if (this.keyLight !== null) this.keyLight.castShadow = profile.shadowQuality !== 'off';
-    }
-    this.resize(this.cssWidth, this.cssHeight, profile.maxPixelRatio);
+    this.applyShadows(planShadows(profile, this.drs.scale));
+    this.applyResolution();
   }
 
   setActive(active: boolean): void {
     this.active = active;
   }
 
-  /** 同步建筑实例（整批重建，但只在建筑变化时调用）。 */
+  /**
+   * 同步建筑实例（整批重建，但只在建筑变化时调用）。
+   *
+   * 实际绘制交给 `BuildingLodLayer`：近处是实例化方盒，远处是 billboard 贴片。
+   * 这里保留 `boxes` 字段只为兼容老的 `debugInfo` 读取。
+   */
   setBoxes(specs: readonly Box3DSpec[]): void {
     const scene = this.scene;
     if (scene === null) return;
-    if (this.boxes !== null) {
-      scene.remove(this.boxes);
-      this.boxes.geometry.dispose();
-      (this.boxes.material as THREE.Material).dispose();
-      this.boxes = null;
+    if (this.buildings === null) {
+      this.buildings = new BuildingLodLayer();
+      scene.add(this.buildings.object);
     }
-    if (specs.length === 0) return;
+    this.buildings.setBuildings(specs);
+    this.buildings.setShadows(this.shadows.enabled);
+    // 建筑刚换过，相机没动也要重新分类一次
+    const camera = this.camera;
+    if (camera !== null) this.buildings.update(camera.position.x, camera.position.z, true);
+    this.boxes = null;
+  }
 
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    geometry.translate(0, 0.5, 0);
-    const material = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.05 });
-    const mesh = new THREE.InstancedMesh(geometry, material, specs.length);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    specs.forEach((spec, index) => {
-      this.matrix.makeScale(spec.width, spec.height, spec.depth);
-      this.matrix.setPosition(spec.x + spec.width / 2, spec.y, spec.z + spec.depth / 2);
-      mesh.setMatrixAt(index, this.matrix);
-      mesh.setColorAt(index, this.color.setHex(spec.color));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor !== null) mesh.instanceColor.needsUpdate = true;
-    scene.add(mesh);
-    this.boxes = mesh;
+  /**
+   * 接入压缩纹理（KTX2）。
+   *
+   * 走 `@tabby/assets` 的候选链：能力允许就加载 `.ktx2`，否则退回未压缩版。
+   * 加载器与解码器都是**动态 import** 的，所以「只想画几个方块」的游戏不会
+   * 因为调了这个 API 就多下 900KB。
+   *
+   * 贴图同时应用到建筑方盒与远景贴片：没有它，远处建筑就是一排纯色片。
+   */
+  async loadBuildingTexture(base: string, legacy: readonly string[] = ['png']): Promise<boolean> {
+    const renderer = this.renderer;
+    if (renderer === null) return false;
+    try {
+      const { ThreeAssetHost, probeAssetCapabilities } = await import('@tabby/assets');
+      const gl = renderer.getContext();
+      const caps = probeAssetCapabilities(gl as WebGL2RenderingContext, renderer.capabilities.isWebGL2);
+      if (this.assetHost === null) {
+        this.assetHost = new ThreeAssetHost({
+          renderer,
+          decoderPaths: this.options.decoderPaths ?? DEFAULT_DECODER_PATHS,
+          caps,
+        });
+      }
+      const texture = await this.assetHost.loadTexture(base, legacy);
+      const material = this.boxes?.material as THREE.MeshStandardMaterial | undefined;
+      if (material !== undefined) {
+        material.map = texture;
+        material.needsUpdate = true;
+      }
+      this.buildings?.setImpostorTexture(texture);
+      return true;
+    } catch (error) {
+      // 纹理是锦上添花：加载失败继续用纯色，不该把整个场景拖黑
+      this.textureError = error instanceof Error ? error.message : String(error);
+      return false;
+    }
+  }
+
+  /** 画质与稳定性诊断：面板直接用，省得再去翻各个子系统。 */
+  get qualityInfo(): {
+    readonly drsScale: number;
+    readonly medianFrameMs: number;
+    readonly adjustments: number;
+    readonly shadowReason: string;
+    readonly shadowMaps: number;
+    readonly lodNear: number;
+    readonly lodFar: number;
+    readonly lodCulled: number;
+    readonly contextLost: number;
+    readonly contextRestored: number;
+    readonly bufferWidth: number;
+    readonly bufferHeight: number;
+    readonly textureError: string | null;
+  } {
+    const split = this.buildings?.lodSplit ?? { near: 0, far: 0, culled: 0 };
+    const drs = this.drs.state;
+    return {
+      drsScale: drs.scale,
+      medianFrameMs: drs.medianFrameMs,
+      adjustments: drs.adjustments,
+      shadowReason: this.shadows.reason,
+      shadowMaps: (this.shadows.near === null ? 0 : 1) + (this.shadows.far === null ? 0 : 1),
+      lodNear: split.near,
+      lodFar: split.far,
+      lodCulled: split.culled,
+      contextLost: this.guard?.stats.lost ?? 0,
+      contextRestored: this.guard?.stats.restored ?? 0,
+      bufferWidth: this.renderer?.getContext().drawingBufferWidth ?? 0,
+      bufferHeight: this.renderer?.getContext().drawingBufferHeight ?? 0,
+      textureError: this.textureError,
+    };
+  }
+
+  /** 手动把分辨率打回满档（切场景、改画质设置后调用）。 */
+  resetDynamicResolution(): void {
+    this.drs.reset(1);
+    this.applyResolution();
   }
 
   /** 绑定风车/水车：几何体绕 Z 轴旋转，角度来自物理层单摆。 */
@@ -355,6 +505,12 @@ export class Renderer3DView implements ViewAdapter {
   }
 
   dispose(): void {
+    this.guard?.dispose();
+    this.guard = null;
+    this.assetHost?.dispose();
+    this.assetHost = null;
+    this.buildings?.dispose();
+    this.buildings = null;
     this.orbit?.dispose();
     this.orbit = null;
     this.fluid?.dispose();
@@ -389,10 +545,77 @@ export class Renderer3DView implements ViewAdapter {
     this.engine = null;
   }
 
-  private computeSizeScale(): number {
-    const height = this.cssHeight * (this.profile?.renderScale ?? 1);
+  private computeSizeScale(bufferHeight = this.cssHeight): number {
     const fovRad = ((this.camera?.fov ?? 50) * Math.PI) / 180;
-    return height / (2 * Math.tan(fovRad / 2));
+    // 用**真实 drawing buffer 高度**：gl_PointSize 是设备像素，
+    // 按 CSS 高度算会让同场景在高 DPR 设备上粒子偏小
+    return bufferHeight / (2 * Math.tan(fovRad / 2));
+  }
+
+  /**
+   * 应用阴影预算。
+   *
+   * 「两级」不是 CSM 的级联：这里是**两盏独立平行光**，近处那盏覆盖 18m
+   * 用高分辨率图，远处那盏覆盖 60m 用低分辨率图。没有级联拼接，
+   * 也就没有接缝，代价只是多一次 shadow pass —— 而且只在高端档才开。
+   */
+  private applyShadows(plan: ShadowPlan): void {
+    this.shadows = plan;
+    const renderer = this.renderer;
+    const scene = this.scene;
+    if (renderer === null || scene === null) return;
+
+    renderer.shadowMap.enabled = plan.enabled;
+
+    const near = this.keyLight;
+    if (near !== null) {
+      near.castShadow = plan.enabled;
+      const stage = plan.near;
+      if (stage !== null) {
+        near.shadow.mapSize.set(stage.mapSize, stage.mapSize);
+        near.shadow.camera.left = -stage.extent;
+        near.shadow.camera.right = stage.extent;
+        near.shadow.camera.top = stage.extent;
+        near.shadow.camera.bottom = -stage.extent;
+        near.shadow.camera.near = stage.near;
+        near.shadow.camera.far = stage.far;
+        near.shadow.camera.updateProjectionMatrix();
+        // 换过 mapSize 必须丢掉旧的 render target，否则 three 会继续用旧尺寸
+        near.shadow.map?.dispose();
+        near.shadow.map = null;
+      }
+    }
+
+    const far = plan.far;
+    if (far === null) {
+      if (this.farLight !== null) {
+        scene.remove(this.farLight);
+        this.farLight.shadow.map?.dispose();
+        this.farLight.dispose();
+        this.farLight = null;
+      }
+    } else {
+      if (this.farLight === null) {
+        const light = new THREE.DirectionalLight(0xffffff, 0.9);
+        light.position.set(-14, 26, -18);
+        scene.add(light);
+        this.farLight = light;
+      }
+      const light = this.farLight;
+      light.castShadow = true;
+      light.shadow.mapSize.set(far.mapSize, far.mapSize);
+      light.shadow.camera.left = -far.extent;
+      light.shadow.camera.right = far.extent;
+      light.shadow.camera.top = far.extent;
+      light.shadow.camera.bottom = -far.extent;
+      light.shadow.camera.near = far.near;
+      light.shadow.camera.far = far.far;
+      light.shadow.camera.updateProjectionMatrix();
+      light.shadow.map?.dispose();
+      light.shadow.map = null;
+    }
+
+    this.buildings?.setShadows(plan.enabled);
   }
 
   private updateFluid(engine: Engine): void {

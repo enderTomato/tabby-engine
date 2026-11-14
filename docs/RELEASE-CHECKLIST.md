@@ -14,7 +14,7 @@
 
 - [ ] 主包 gzip < 400KB，首屏可交互 < 3s（4G）
       **验**：`ls -la apps/demo/dist/assets/*.js`，或 Lighthouse。
-      **现状**：demo 主包 gzip ≈ 320KB（Three + Pixi 占大头）。
+      **现状**：demo 主包 gzip ≈ 340KB（Three + Pixi 占大头）。
 
 - [ ] 分包生效：`three` 与 `pixi` 不在首屏同步加载路径上
       **验**：Network 面板里 `WebGLRenderer-*.js` 应该只在进 3D 时出现。
@@ -25,6 +25,18 @@
 
 - [ ] 资源体积预算：纹理 < 8MB、音频 < 5MB、地形数据 < 5MB
       **验**：`du -sh public/*`
+
+- [ ] **解码器不在 JS 产物里**（basis 527KB + draco 285KB）
+      **验**：`ls apps/*/dist/decoders` 应有文件；
+      `grep -o "AGFzbQ" apps/*/dist/assets/*.js | wc -l` 应为 **1**（base64 的 wasm 魔数，
+      仅命中 KTX2Loader 自带的几 KB zstd，不是转码器本体）。
+      注意**别**用 `grep -l basis_transcoder` 判断 —— `KTX2Loader` chunk 里本来就有
+      `basis_transcoder.js/.wasm` 路径字符串，一定会命中，这条会永久假红。
+      **不通过**：只想画几个方块的游戏也要先下 1MB 才能出画面。
+
+- [ ] `@tabby/assets` 与加载器在不同 chunk 里（动态 import 没被静态化）
+      **验**：构建日志里应看到 `KTX2Loader-*.js` / `DRACOLoader-*.js` 独立 chunk。
+      **不通过**：说明某处静态 import 了加载器，压缩格式的成本被强加给所有用户。
 
 ---
 
@@ -85,9 +97,35 @@
       **验**：`Engine.create({ forceTier: 'low' })`，或用 SwiftShader 模拟。
 - [ ] 物体数达到设计上限时仍达标：布娃娃 36 个 / 流体粒子按档位 / 建筑 200 栋
 
+- [ ] **DRS 不抖**：画质诊断里 `DRS ×N.NN` 应该稳定在某个值上
+      **验**：站着不动看 30 秒，`调整次数` 最多涨 1~2 次。
+      **不通过**：每秒涨好几次说明迟滞/冷却被改小了 —— 分辨率会肉眼可见地来回跳。
+      另外注意目标帧时间要对齐档位：低端 33.3ms，60fps 档 16.7ms。
+
+- [ ] 阴影预算与档位一致（诊断面板 `阴影` 一行的说明）
+      **验**：低端应显示「阴影全关」；高端应显示两级。DRS 掉到 0.85 以下时 mapSize 减半。
+      **不通过**：低端还开着 1024² 阴影 = 最贵的 pass 独占预算。
+
+- [ ] 建筑 LOD 不闪：在近/远分界线（默认 26~30m）附近来回移动
+      **验**：面板「建筑 LOD 近 N / 远 M」两个数不应跳变。
+      **不通过**：迟滞带被设成 0，建筑会在方盒与贴片之间来回切。
+
 ---
 
 ## E. 稳定性
+
+- [ ] **上下文丢失能恢复**（Android 切后台必踩）
+      **验**：`node tools/smoke-demo.mjs`（脚本里用 `WEBGL_lose_context` 真丢一次）；
+      或手动：控制台执行
+      `const gl=document.querySelector('canvas').getContext('webgl2');
+       const e=gl.getExtension('WEBGL_lose_context'); e.loseContext();
+       setTimeout(()=>e.restoreContext(),300)`。
+      **通过标准**：画面回来、诊断面板「上下文 丢失 1 次 · 恢复 1 次」、控制台无报错。
+      **不通过**：用户切回游戏看到一片黑，且永远不会恢复 —— 因为没调 `preventDefault()`。
+
+- [ ] 恢复后模拟会继续跑（不是「画面回来了但世界不动」）
+      **验**：恢复后等 2 秒看日期是否继续推进。
+      **不通过**：主循环在 lost 时被冻结但没人解冻，属于最常见的半吊子实现。
 
 - [ ] WebGL context lost / restored 能恢复
       **验**：`canvas.getContext('webgl2').getExtension('WEBGL_lose_context').loseContext()`。

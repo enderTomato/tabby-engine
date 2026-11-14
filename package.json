@@ -11,14 +11,22 @@
     "clean": "pnpm -r --filter \"./packages/*\" exec rm -rf dist tsconfig.tsbuildinfo",
     "build:pkgs": "pnpm -r --filter \"./packages/*\" build",
     "build:demo": "pnpm --filter @tabby/demo build",
+    "build:playground": "pnpm --filter @tabby/playground build",
     "build": "pnpm build:pkgs && pnpm build:demo",
     "typecheck": "pnpm -r --filter \"./packages/*\" exec tsc -p tsconfig.json --noEmit",
     "test": "pnpm -r --if-present test",
     "dev": "pnpm build:pkgs && pnpm --filter @tabby/demo dev",
+    "dev:playground": "pnpm build:pkgs && pnpm --filter @tabby/playground dev",
     "preview": "pnpm --filter @tabby/demo preview",
+    "assets:build": "node tools/make-test-assets.mjs",
+    "assets:decoders": "node tools/copy-decoders.mjs",
+    "smoke:playground": "node tools/smoke-playground.mjs",
+    "smoke:demo": "node tools/smoke-demo.mjs",
     "pack:check": "pnpm -r --filter \"./packages/*\" exec npm pack --dry-run"
   },
   "devDependencies": {
+    "draco3d": "^1.5.9",
+    "ktx2-encoder": "^0.6.0",
     "typescript": "^5.6.0"
   }
 }

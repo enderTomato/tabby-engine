@@ -606,6 +606,7 @@ function collectDiagnostics(): string {
   const projection = sim.verifyProjection();
   const h = sim.hud();
   const priceNote = h.foodPrice <= 1.51 ? '（已触 0.3× 基准下限）' : '';
+  const quality = view3d?.qualityInfo ?? null;
   return [
     engine.getDiagnostics().report,
     '── 经济内核 ──',
@@ -627,6 +628,15 @@ function collectDiagnostics(): string {
     `常驻块    ${streamStats.resident} / ${streamStats.total}（累计加载 ${streamStats.loads}、卸载 ${streamStats.unloads}）`,
     `存档体积  经济层 ${sim.economy.save().byteLength}B + 地图分块 ${sim.worldArchiveInfo().bytes}B（${sim.worldArchiveInfo().chunks} 块）`,
     `小地图    缩略图 ${sim.minimap.redraws} 次重绘`,
+    '── 画质与稳定性 ──',
+    quality === null
+      ? '3D 视图未挂载'
+      : `分辨率    DRS ×${quality.drsScale.toFixed(2)} · 缓冲 ${quality.bufferWidth}×${quality.bufferHeight}（帧中位数 ${quality.medianFrameMs.toFixed(1)}ms，调整 ${quality.adjustments} 次）`,
+    quality === null ? '' : `阴影      ${quality.shadowReason}`,
+    quality === null ? '' : `建筑 LOD  近 ${quality.lodNear} / 远 ${quality.lodFar} / 剔除 ${quality.lodCulled}`,
+    quality === null
+      ? ''
+      : `上下文    丢失 ${quality.contextLost} 次 · 恢复 ${quality.contextRestored} 次${quality.textureError === null ? '' : ` · 纹理加载失败：${quality.textureError}`}`,
     '── 配置表 ──',
     configStatus.value,
     `投影自检  ${projection.ok ? '✓' : '✗'} ${projection.detail}`,

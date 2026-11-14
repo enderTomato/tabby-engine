@@ -23,6 +23,7 @@
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
+    "@tabby/assets": "workspace:*",
     "@tabby/core": "workspace:*",
     "@tabby/engine": "workspace:*",
     "@tabby/input": "workspace:*",

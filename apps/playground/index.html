@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Tabby Playground · 逐特性验证台</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside class="rail">
+        <header class="brand">
+          <span class="logo">◈</span>
+          <div>
+            <strong>Playground</strong>
+            <em>逐特性隔离验证</em>
+          </div>
+        </header>
+        <nav id="feature-list" class="features"></nav>
+        <footer class="rail-foot">
+          <button id="bench-all" type="button">全部跑分</button>
+          <p id="caps-line" class="caps">探测中…</p>
+        </footer>
+      </aside>
+      <main class="board">
+        <header class="board-head">
+          <div>
+            <h1 id="probe-title">选择左侧的特性</h1>
+            <p id="probe-summary" class="summary">
+              每个特性只加载它自己的最小依赖 —— 一个探针崩了不会拖垮别的，这本身也是隔离验证的一部分。
+            </p>
+          </div>
+          <div class="board-actions">
+            <button id="bench-one" type="button" disabled>跑分</button>
+          </div>
+        </header>
+        <section id="probe-host" class="probe-host">
+          <div class="placeholder">尚未选择特性</div>
+        </section>
+        <footer class="board-foot">
+          <pre id="stats" class="stats">等待探针…</pre>
+          <pre id="log" class="log"></pre>
+        </footer>
+      </main>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

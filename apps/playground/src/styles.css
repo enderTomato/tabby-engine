@@ -1,0 +1,384 @@
+:root {
+  --bg: #06080d;
+  --panel: #0c1118;
+  --panel-2: #101821;
+  --border: #1d2a38;
+  --border-hot: #2d4a63;
+  --text: #d7e6f6;
+  --muted: #7d8fa3;
+  --accent: #6ec7ff;
+  --good: #6ee7a8;
+  --warn: #ffd166;
+  --bad: #ff7b7b;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 244px minmax(0, 1fr);
+  height: 100%;
+}
+
+/* ---------------------------------------------------------------- 侧栏 */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 10px;
+  background: linear-gradient(180deg, #0a0f16, #070b11);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+
+.brand {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 4px 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand .logo {
+  font-size: 19px;
+  color: var(--accent);
+}
+
+.brand strong {
+  display: block;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.brand em {
+  display: block;
+  font-size: 10px;
+  font-style: normal;
+  color: var(--muted);
+}
+
+.features {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  /* iOS 上滚动到边缘会带着整页弹，这里明确隔离 */
+  overscroll-behavior: contain;
+}
+
+.features .group {
+  margin: 10px 0 3px;
+  padding-left: 6px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.feature {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.feature strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.feature em {
+  display: block;
+  font-size: 10px;
+  font-style: normal;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feature:hover {
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+
+.feature.on {
+  background: #12222f;
+  border-color: var(--border-hot);
+}
+
+.feature.on strong {
+  color: var(--accent);
+}
+
+.rail-foot {
+  flex: 0 0 auto;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.rail-foot button {
+  width: 100%;
+}
+
+.caps {
+  margin: 8px 0 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.caps[data-tier='high'] {
+  color: var(--good);
+}
+
+.caps[data-tier='mid'] {
+  color: var(--warn);
+}
+
+.caps[data-tier='low'] {
+  color: var(--bad);
+}
+
+/* ---------------------------------------------------------------- 主区 */
+
+.board {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.board-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.board-head h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.summary {
+  margin: 3px 0 0;
+  max-width: 78ch;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.board-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  padding: 6px 13px;
+  color: var(--text);
+  background: #14202c;
+  border: 1px solid var(--border-hot);
+  border-radius: 7px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #1a2b3a;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.probe-host {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  /* 探针自己的 canvas 绝对定位铺满这里 */
+}
+
+.probe-host canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* 触摸设备上必须关掉浏览器自己的手势，否则拖动会滚页面 */
+  touch-action: none;
+}
+
+.placeholder {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 探针内部常用的浮层 */
+.probe-overlay {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  background: rgba(8, 13, 20, 0.86);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  max-width: 320px;
+  pointer-events: none;
+}
+
+.probe-overlay b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.probe-overlay .row {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.probe-overlay .row span:last-child {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.probe-controls {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+}
+
+.probe-controls button {
+  background: rgba(14, 24, 34, 0.92);
+  font-size: 11px;
+  padding: 5px 10px;
+}
+
+.probe-controls button.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- 底部 */
+
+.board-foot {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1px;
+  max-height: 34vh;
+  border-top: 1px solid var(--border);
+  background: var(--border);
+}
+
+.stats,
+.log {
+  margin: 0;
+  padding: 9px 12px;
+  overflow: auto;
+  font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #070c12;
+  color: #a9c3d8;
+  white-space: pre-wrap;
+}
+
+.log {
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  #app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .rail {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand {
+    padding: 0;
+    border-bottom: 0;
+    flex: 0 0 auto;
+  }
+
+  .brand em,
+  .features .group,
+  .rail-foot .caps {
+    display: none;
+  }
+
+  .features {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .feature {
+    width: auto;
+    white-space: nowrap;
+  }
+
+  .feature em {
+    display: none;
+  }
+
+  .rail-foot {
+    padding: 0;
+    border-top: 0;
+  }
+
+  .board-foot {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: 26vh;
+  }
+
+  .log {
+    display: none;
+  }
+}

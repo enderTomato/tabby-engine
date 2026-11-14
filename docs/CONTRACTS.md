@@ -21,7 +21,10 @@
 | `graph` | 无 | 经济 / 渲染 | 只认结构与成本，不认「建筑」「金币」 |
 | `input` | 无 | 渲染 / three | 手势判据是时间与位移，与画什么无关 |
 | `economy` | `core` | 渲染 / 物理 / `graph` | 只认 `LogisticsProvider` 接口（依赖倒置） |
-| `render2d` / `render3d` | `core` / `platform` / `physics`（只读） | `economy` | 渲染读状态，不改状态 |
+| `ui` | 无（**不依赖 Vue**） | 玩法 / 渲染 / 经济 | 小地图、标签池、旋钮、toast 都是纯 TS，换框架还能用 |
+| `gameplay` | `core` / `economy` / `graph` / `ui` | **Vue / three / pixi** | 参考玩法的数据层；它一变，玩法就换了一套 |
+| `render2d` / `render3d` | `core` / `platform` / `physics`（只读）/ `assets`（渲染侧） | `economy` / `gameplay` | 渲染读状态，不改状态 |
+| `assets` | `core` | 玩法 / 经济 / 引擎 | 只做能力探测、候选链、缓存；three 只作为**类型**依赖 |
 | `animation` | `core` | 渲染 | 只产插值数值 |
 | `engine` | 上面全部 | `apps/*` | 编排层 |
 | `apps/*` | 全部 | — | 应用层 |
@@ -33,6 +36,10 @@
    `CityLogistics` 实现 `efficiencyOf(buildingId, city)`，两边互不知道对方存在。
 2. **`physics` 不能 import `three`**。物理跑在 Worker 里，Worker 里 `import three`
    会连带引入 DOM 相关代码，在部分安卓 WebView 上直接抛错（而不是优雅降级）。
+3. **`@tabby/ui` 不能 import Vue，也不能 import `gameplay`**。前者是「换框架还能用」的
+   唯一保证（`apps/playground` 就是拿它在无框架环境里跑的证据）；后者会把它变成玩法的一部分。
+4. **`@tabby/assets` 对 three 只能有类型依赖**（`import type`）。运行时加载器一律
+   `await import('three/addons/loaders/...')`，否则压缩格式的成本被强加给所有用户。
 
 ---
 

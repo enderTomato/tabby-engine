@@ -134,6 +134,19 @@ engine.bus.on('fixed', ({ dt }) => {
 
 控制台可读：`__tabby`（引擎实例）、`__tabby3d.debug()`（绘制规模）。
 
+## Playground
+
+`apps/playground` 是**逐特性隔离验证台**，不是第二个 demo：12 个探针各自只加载该特性的
+最小依赖、各自跑分，一个崩了不拖垮别的。外壳用纯 DOM 而不是 Vue —— 这是「引擎不绑框架」
+的唯一证据。
+
+```bash
+pnpm dev:playground                      # http://localhost:5174
+node tools/smoke-playground.mjs 4175     # 无头跑一遍
+```
+
+设计与「怎么加一个探针」见 [docs/PLAYGROUND.md](docs/PLAYGROUND.md)。
+
 ## 模块完成度
 
 21 项任务的当前状态。**「有骨架」和「能用」是两件事**，这里只标能用。
@@ -157,19 +170,35 @@ engine.bus.on('fixed', ({ dt }) => {
 | 调参面板 | ✅ | 6 个旋钮全部真写世界，写失败弹回真实值 |
 | 联动契约 | ✅ | `docs/CONTRACTS.md`：依赖矩阵 + 暴雨端到端时序 |
 | 上线清单 | ✅ | `docs/RELEASE-CHECKLIST.md`：9 组检查项，含"怎么验" |
-| UI 包 / 玩法包 | ⬜ | 独立 `@tabby/ui`、`@tabby/gameplay` 尚未拆出，当前逻辑在 demo 内 |
-| 资源加载器 | ⬜ | KTX2 / DRACO 压缩纹理与网格的光栅化装载未做 |
-| 3D 优化 | 🟡 | 已有实例化、点精灵、档位缩放；缺 KTX2 纹理、建筑 LOD/impostor、CSM 阴影、DRS、context lost 恢复 |
-| 独立 playground | ⬜ | 目前只有 `apps/demo` 一个应用，没有逐特性隔离验证的第二个应用 |
+| UI 包 / 玩法包 | ✅ | `@tabby/ui`（零依赖 Vue）+ `@tabby/gameplay`（参考玩法）；demo 只剩模板与组装 |
+| 资源加载器 | ✅ | `@tabby/assets`：能力探测 → 候选链 → 加载；解码器按需拉取，不进主包 |
+| 3D 优化 | ✅ | DRS、阴影预算、建筑 LOD、上下文丢失恢复、KTX2 接入（明确不做 CSM，见 ADR-008） |
+| 独立 playground | ✅ | `apps/playground`：12 个探针逐特性隔离 + 批量计时跑分 + 无头冒烟 |
 
-测试：**240 项**（physics 44 / economy 31 / graph 26 / terrain 23 / input 30 / render3d 16 / demo 70），
-全仓库 `pnpm typecheck` 零错误。
+测试：**345 项**（physics 44 / economy 31 / graph 26 / terrain 23 / input 30 / render3d 43 /
+assets 33 / ui 39 / gameplay 13 / demo 63），全仓库 `pnpm typecheck` 零错误。
+另有两条无头冒烟：`node tools/smoke-demo.mjs`（含真实上下文丢失恢复）、
+`node tools/smoke-playground.mjs`（12 个探针逐个挂载 + 跑分）。
 
 ## 架构决策
 
-不可逆决策记录在 [docs/adr/](docs/adr/README.md)，共 6 条：渲染混合、物理积分、线程模型、视图抽象、包拆分、液体路线。
+不可逆决策记录在 [docs/adr/](docs/adr/README.md)，共 8 条：渲染混合、物理积分、线程模型、
+视图抽象、包拆分、液体路线、经济权威、3D 优化路线（含「为什么不做 CSM」）。
 
 写 ADR 的判定标准、模板与索引见该目录 README。
+
+## 文档
+
+| 文档 | 讲什么 |
+|---|---|
+| [docs/CONTRACTS.md](docs/CONTRACTS.md) | 依赖矩阵、每帧时序、「暴雨」端到端链路 |
+| [docs/QUALITY.md](docs/QUALITY.md) | DRS / 阴影预算 / 建筑 LOD / 上下文丢失的参数与排障 |
+| [docs/ASSETS.md](docs/ASSETS.md) | KTX2 / DRACO：能力探测、候选链、解码器托管、缓存 |
+| [docs/PLAYGROUND.md](docs/PLAYGROUND.md) | 12 个探针、跑分口径、怎么加探针 |
+| [docs/LOGISTICS.md](docs/LOGISTICS.md) | 路网建模与效率曲线 |
+| [docs/EXTENDING.md](docs/EXTENDING.md) | 插件与扩展点 |
+| [docs/RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md) | 上线前逐项检查（含「怎么验」） |
+| [docs/ANDROID-DEPLOY.md](docs/ANDROID-DEPLOY.md) | 四套部署配置 |
 
 ## 部署
 
