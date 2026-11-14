@@ -15,6 +15,8 @@
 │ Pixi.js       │ Three.js      │ SAB + postMessage│
 ├──────────────┴──────────────┴─────────────────┤
 │ @tabby/physics   零渲染依赖，可单独发 npm         │
+│ @tabby/terrain   高程导入 / 分块 / LOD / 法线      │
+│ @tabby/economy   tick 分层 / 供需价格 / 二进制存档  │
 ├───────────────────────────────────────────────┤
 │ @tabby/platform  能力探测 / 档位判定 / GPU 黑名单  │
 │ @tabby/core      事件总线 / 定步循环 / 性能采样    │
@@ -45,6 +47,7 @@ cd apps/demo/dist && node serve.mjs
 | 引擎不认识具体渲染器 | `ViewAdapter` 是唯一入口，`render3d` 整个不装也能跑无头模拟 |
 | 禁止 `isAndroid` 分支 | 全部走 `PlatformCapabilities` 的能力位判定 |
 | 严格模式无 `any` | `strict` + `noUncheckedIndexedAccess`，索引访问强制判空 |
+| 经济层不碰渲染与时钟 | `@tabby/economy` 的 `lib` 只有 `ES2022`，写 `window` / `performance` 直接编译失败；时间从 `advance(dt)` 注入 |
 
 ## 平台能力探测
 

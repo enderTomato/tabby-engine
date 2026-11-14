@@ -1,0 +1,29 @@
+{
+  "name": "@tabby/economy",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "经济内核：tick 分层调度、TypedArray 实体池、供需价格、人口迁移、确定性存档",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@tabby/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
