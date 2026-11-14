@@ -28,9 +28,14 @@ pnpm install
 pnpm build        # 编译全部包 + 构建 demo
 pnpm dev          # 编译包后启动 demo 开发服务器
 pnpm preview      # 预览已构建产物（自带 COOP/COEP 头）
+
+# 只想要能跑的产物（dist 里自带零依赖静态服务器）
+cd apps/demo/dist && node serve.mjs
 ```
 
 > 必须通过 HTTP 访问。`file://` 下拿不到 WebGL2 上下文，Worker 也不行。
+>
+> 不想装 pnpm 也可以：Release 里的 `-dist` 包解压后 `node serve.mjs` 直接就能跑。
 
 ## 分层约束
 
