@@ -158,8 +158,8 @@ function syncCity(): void {
   });
 
   const specs3d: Box3DSpec[] = [
-    { id: 'tower', x: TOWER.x, y: 0, z: -1.6, width: TOWER.width, height: TOWER.height, depth: 3.2, color: 0x3f7ec9 },
-    { id: 'mill-pole', x: 8.1, y: 0, z: -2.6, width: 0.8, height: 6.2, depth: 0.8, color: 0x556377 },
+    { id: 'tower', x: TOWER.x, y: 0, z: 1.2, width: TOWER.width, height: TOWER.height, depth: 2.4, color: 0x3f7ec9 },
+    { id: 'mill-pole', x: 8.1, y: 0, z: -9, width: 0.8, height: 6.2, depth: 0.8, color: 0x556377 },
   ];
   drawBox2D({ x: 8.1, y: 0, width: 0.8, height: 6.2, color: 0x556377 });
 
@@ -170,14 +170,15 @@ function syncCity(): void {
       const rect = cellRect(col, row);
       const height = kind === 'wall' ? 2 : kind === 'farm' ? 1.2 : CELL_SIZE;
       drawBox2D({ x: rect.x, y: rect.y, width: rect.width, height, color: CELL_COLOR[kind] });
+      // 2D 的 rect.y 是"行"纵深，3D 里必须落到 z 轴；直接当 y 用会让建筑悬空。
       specs3d.push({
         id: `cell-${col}-${row}`,
         x: rect.x,
-        y: rect.y,
-        z: -1.6,
-        width: rect.width,
+        y: 0,
+        z: -4 + row * CELL_SIZE,
+        width: rect.width * 0.94,
         height,
-        depth: 3.2,
+        depth: CELL_SIZE * 0.94,
         color: CELL_COLOR[kind],
       });
     }
@@ -298,9 +299,19 @@ onMounted(async () => {
     flash(`${viewId} 初始化失败，已跳过（${message.slice(0, 40)}）`);
   });
 
+  // 开局先扔两个布娃娃：切到 3D 页立刻能看出物理在跑，不用先点一下
+  ragdollSeq = 2;
+  for (const [index, seedX] of [-3.4, 2.8].entries()) {
+    const seedZ = -1.2 + index * 2.6;
+    const seedId = `rag-${index + 1}`;
+    const ragdoll = engine.world.spawnHumanoid(seedId, seedX, 9.5, seedZ, 0.9);
+    ragdoll.addRadialImpulse(seedX, 9.5, seedZ, 2.2, 4.5);
+    ragdollIds.push(seedId);
+  }
+
   engine.world.addPendulum('mill', { length: 2.4, gravity: 9.8, damping: 0.12, angle: 1.1 });
   view3d.bindSpinners([
-    { id: 'mill', pendulumId: 'mill', x: 8.5, y: 6.2, z: -2.2, radius: 2.4, thickness: 0.28, color: 0xd9a441 },
+    { id: 'mill', pendulumId: 'mill', x: 8.5, y: 6.2, z: -8.6, radius: 2.4, thickness: 0.28, color: 0xd9a441 },
   ]);
 
   syncCity();

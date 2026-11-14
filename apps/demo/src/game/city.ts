@@ -52,13 +52,37 @@ export const CELL_COLOR: Record<CellKind, number> = {
   wall: 0x6d7f95,
 };
 
+/**
+ * 开局自带的几栋建筑。
+ * 空网格会让人以为渲染挂了 —— 首屏必须有东西可看，顺便也让水流有落点。
+ */
+const SEED_LAYOUT: readonly (readonly [number, number, CellKind])[] = [
+  [1, 1, 'house'],
+  [2, 1, 'house'],
+  [3, 1, 'house'],
+  [1, 3, 'farm'],
+  [2, 3, 'farm'],
+  [5, 2, 'wall'],
+  [8, 1, 'house'],
+  [8, 2, 'house'],
+  [9, 4, 'farm'],
+];
+
 export function createCity(): CityState {
+  const cells = new Array<CellKind>(GRID_COLS * GRID_ROWS).fill('empty');
+  let houses = 0;
+  let farms = 0;
+  for (const [col, row, kind] of SEED_LAYOUT) {
+    cells[indexOf(col, row)] = kind;
+    if (kind === 'house') houses += 1;
+    else if (kind === 'farm') farms += 1;
+  }
   return {
-    cells: new Array<CellKind>(GRID_COLS * GRID_ROWS).fill('empty'),
+    cells,
     coins: 160,
-    houses: 0,
-    farms: 0,
-    farmWater: [],
+    houses,
+    farms,
+    farmWater: new Array<number>(farms).fill(0),
   };
 }
 
