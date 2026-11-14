@@ -2,6 +2,7 @@ import type { BuildingDef, EconomyConfig, ResourceDef } from './types.js';
 import { RES_STRIDE } from './types.js';
 import type { EconomyState } from './state.js';
 import { clamp, inflationRatio, nextPrice } from './price.js';
+import { TREASURY_MAX, TREASURY_MIN } from './types.js';
 
 export interface SystemContext {
   readonly state: EconomyState;
@@ -214,7 +215,8 @@ export function runTax(ctx: SystemContext, daysPerMonth: number): { taxIncome: n
     if (pop <= 0) continue;
     const income = pop * config.incomePerCapita * rate * (0.5 + satisfaction * 0.5);
     const rounded = Math.round(income);
-    state.cityTreasury[city] = (state.cityTreasury[city] as number) + rounded;
+    // 与 Economy.addTreasury 同一上下界：这里是唯一绕过门面的写入点
+    state.cityTreasury[city] = clamp((state.cityTreasury[city] as number) + rounded, TREASURY_MIN, TREASURY_MAX);
     total += rounded;
   }
   return { taxIncome: total };

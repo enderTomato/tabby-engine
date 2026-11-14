@@ -1,4 +1,5 @@
 import { EconomyState, PERSISTED_FIELDS, type PersistedField } from './state.js';
+import { TREASURY_MAX, TREASURY_MIN } from './types.js';
 
 const MAGIC = 0x54424531; // "TBE1"
 export const SAVE_VERSION = 1;
@@ -164,6 +165,14 @@ function rebuildStockBounds(state: EconomyState): void {
     if (!Number.isFinite(v)) state.buildingEfficiency[i] = 1;
     else if (v > 1) state.buildingEfficiency[i] = 1;
     else if (v < 0) state.buildingEfficiency[i] = 0;
+  }
+  // 金库也走同一套防御：读档是唯一绕过 Economy.addTreasury 的写入路径，
+  // 旧版本 bug 或手改的存档可能带着负值 / 溢出值进来，不修就会立刻被判破产
+  for (let i = 0; i < state.cityTreasury.length; i += 1) {
+    const v = state.cityTreasury[i] as number;
+    if (!Number.isFinite(v)) state.cityTreasury[i] = 0;
+    else if (v < TREASURY_MIN) state.cityTreasury[i] = TREASURY_MIN;
+    else if (v > TREASURY_MAX) state.cityTreasury[i] = TREASURY_MAX;
   }
   for (let i = 0; i < state.price.length; i += 1) {
     const v = state.price[i] as number;

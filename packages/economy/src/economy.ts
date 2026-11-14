@@ -20,6 +20,8 @@ import {
 import { decodeSave, encodeSave, SAVE_VERSION } from './save.js';
 import {
   RES_STRIDE,
+  TREASURY_MAX,
+  TREASURY_MIN,
   type BuildingDef,
   type CitySnapshot,
   type EconomyCommand,
@@ -196,8 +198,7 @@ export class Economy {
         // 只接受正数：负数会把金库打成负值，「破产」这类机制必须走维护费那条路径，
         // 否则会有人用 deposit(-1e9) 去"测试"破产，然后真的把存档写坏
         if (!(command.amount > 0)) return this.reject('bad-amount', `存款金额必须为正，收到 ${command.amount}`);
-        this.state.cityTreasury[command.city] =
-          (this.state.cityTreasury[command.city] as number) + Math.round(command.amount);
+        this.addTreasury(command.city, command.amount);
         return true;
       }
       default: {
@@ -259,7 +260,7 @@ export class Economy {
     const def = this.buildings[this.state.buildingType[id] as number];
     const city = this.state.buildingCity[id] as number;
     if (def !== undefined && this.validCity(city)) {
-      this.state.cityTreasury[city] = (this.state.cityTreasury[city] as number) + Math.floor(def.buildCost * 0.5);
+      this.addTreasury(city, Math.floor(def.buildCost * 0.5));
     }
     this.state.destroy(id);
     aggregate(this.context());
@@ -439,6 +440,19 @@ export class Economy {
       resources: this.resources,
       config: this.config,
     };
+  }
+
+  /**
+   * 金库写入的唯一入口，负责防溢出。
+   *
+   * `cityTreasury` 是 Int32Array：超过 2,147,483,647 会**静默回绕成负数**，
+   * 而 `runEvents` 把负金库判定为破产。也就是说「钱太多」会触发「破产」——
+   * 这个 bug 的触发条件在正常玩法里很难遇到，但修改器、通胀调参失误、
+   * 或者存档跨设备同步时的重复入账都能碰到。上限留 1500 万的安全余量。
+   */
+  private addTreasury(city: number, delta: number): void {
+    const next = (this.state.cityTreasury[city] as number) + Math.round(delta);
+    this.state.cityTreasury[city] = clamp(next, TREASURY_MIN, TREASURY_MAX);
   }
 
   private validCity(city: number): boolean {
