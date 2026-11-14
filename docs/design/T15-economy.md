@@ -250,3 +250,37 @@ interface EconomySave {
 **分帧摊销（§9）未实现。** 实测 50k 建筑 1.41ms/日，在 2ms 预算内，还不需要拆帧。但拆分所需的钩子已经就位：`scratchProduced` / `scratchConsumed` 是预分配的，`aggregate` 是单遍扫描，拆成 chunk 只是加个游标。等实测超了再拆，现在拆属于过早优化。
 
 **物流（步骤 3）是空实现。** 明确留空，不写「先随便挪一点」的占位逻辑 —— 假逻辑一旦被测试依赖上，接真模块时会被当成既有行为保留。
+
+## 12. 自检清单：Android 碎片化环境下最可能踩的三个坑
+
+### 12.1 WebView 切后台回来，时间会跳
+
+Android WebView 在页面不可见时暂停 `requestAnimationFrame`。切回来那一下，rAF 给的 delta 可能是几分钟。
+
+已做两层防护：`advance` 内部把单帧 dt 夹到 1000ms；backlog 超过 `maxBacklogTicks`（240）时直接跳帧 —— 推进日期但不结算，并广播 `tick-skipped`。
+
+**真正的坑在上层**：如果调用方为了「补回后台时间」自己写 `setInterval` 或者直接调 `tickDays(600)`，就绕过了这两层，玩家切回来发现破产了。规则只有一条：**只从引擎主循环喂 `advance(delta)`**，永远不要手动补时间。
+
+### 12.2 低内存设备上，多一份状态就是 3MB
+
+`state.clone()` 会复制全部 TypedArray。50k 建筑约 3.4MB 一份。
+
+2GB 内存的机器上，WebView 本身是多进程架构（渲染进程 + GPU 进程 + 浏览器进程），游戏进程的可用堆比想象中小。同时在内存里留 3~4 份状态做「存档对比」或「撤销」，就是 12MB+ 的额外分配，容易触发系统回收。更糟的是：WebView 里 OOM 的表现是**页面白屏重载**，没有错误日志，线上只会看到「偶发闪退」。
+
+规则：只在存档/读档界面 clone，**不要每帧 clone 做 diff**。要做撤销就用指令日志重放，不要存状态快照。
+
+### 12.3 金库 Int32 回绕（已修，但留了读档缺口）
+
+`cityTreasury` 是 `Int32Array`，超过 2,147,483,647 会**静默回绕成负数**，而 `runEvents` 把负金库判定为破产 —— 也就是「钱太多」触发「破产」。
+
+已在三个写入点钳制到 `[0, 2e9]`：`Economy.addTreasury`（存款/拆除返还）、`runTax`（税收）、`rebuildStockBounds`（读档修复）。
+
+读档那条最容易漏：存档反序列化时 `cityTreasury.set(...)` 直接覆盖数组，完全绕过门面。旧版本 bug 或手改的存档带着负值进来，读档当天就会破产，而且看起来像「读档坏了」。
+
+### 补充：一个不是坑但需要知道的边界
+
+价格公式用了 `Math.pow`。V8 从 2016 年起用 fdlibm 移植的软件实现，**在所有平台上 bit-exact**，所以 Chrome / Android WebView 之间一致。
+
+但 JavaScriptCore（Safari）和 SpiderMonkey（Firefox）是各自实现，末位可能有差异。如果将来做跨浏览器多人同步，价格表会在两端慢慢拉开 —— 那时要么把结算搬到服务端，要么把 `(1/ratio)^elasticity` 换成硬编码查表。
+
+当前不做，因为目标平台是 Chromium 内核，而 iOS 只要求「不破坏可运行性」。

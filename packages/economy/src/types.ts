@@ -35,6 +35,10 @@ export const RES_STRIDE = 8;
 /** 当前启用的资源种类数（≤ RES_STRIDE）。 */
 export const RES_COUNT = 4;
 
+/** 金库上下界。Int32 上限 2147483647，留 1500 万安全余量防回绕。 */
+export const TREASURY_MAX = 2_000_000_000;
+export const TREASURY_MIN = 0;
+
 export interface ResourceDef {
   /** 存档与日志用的稳定标识，**不要**拿来做运行时查找。 */
   readonly key: string;

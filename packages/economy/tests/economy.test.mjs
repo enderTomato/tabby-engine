@@ -11,6 +11,7 @@ import {
   MAX_PRICE_FACTOR,
   MIN_PRICE_FACTOR,
   RES_STRIDE,
+  TREASURY_MAX,
 } from '../dist/index.js';
 
 const HOUSE = buildingIndexOf(DEFAULT_BUILDINGS, 'house');
@@ -234,6 +235,19 @@ test('陷阱：税率被钳制，负税率不会凭空造钱', () => {
   eco.applyCommand({ type: 'set-tax', city: 0, rate: 5 });
   // Float32 存 0.6 会存成 0.6000000238418579，比较要带容差
   assert.ok(Math.abs(eco.state.cityTaxRate[0] - 0.6) < 1e-6);
+});
+
+test('陷阱：金库不会因入账过亿而回绕成负数', () => {
+  const eco = new Economy({ entityCapacity: 8, cityCount: 1 });
+  eco.init({ treasury: [0] });
+  const warnings = [];
+  eco.bus.on('bankrupt', (e) => warnings.push(e));
+  // Int32 上限 2147483647：不钳制的话这里会变成负数，然后被判定为破产
+  eco.applyCommand({ type: 'deposit', city: 0, amount: 3_000_000_000 });
+  assert.equal(eco.state.cityTreasury[0], TREASURY_MAX);
+  assert.ok(eco.state.cityTreasury[0] > 0, '金库必须保持正数');
+  eco.tickDays(30);
+  assert.equal(warnings.length, 0, '钱多不应触发破产事件');
 });
 
 test('通胀比：gdp 为 0 时不会除零', () => {
