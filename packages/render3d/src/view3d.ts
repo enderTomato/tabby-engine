@@ -76,6 +76,8 @@ export class Renderer3DView implements ViewAdapter {
   private readonly matrix = new THREE.Matrix4();
   private readonly color = new THREE.Color();
   private readonly ragdollScratch = new Float32Array(512);
+  /** 关节点插值的临时缓冲，避免每帧 new。 */
+  private readonly ragdollPointScratch = new Float32Array(128);
   /** 关节点位置缓冲，跨帧复用，避免每帧分配触发 GC。 */
   private readonly jointBuffer = new Float32Array(MAX_JOINTS * 3);
   /** 当前帧的烟雾数据引用，供下方两个常量回调读取。 */
@@ -212,7 +214,7 @@ export class Renderer3DView implements ViewAdapter {
 
     this.updateFluid(engine);
     this.updateSmoke(engine);
-    this.updateRagdolls(engine);
+    this.updateRagdolls(engine, frame.alpha);
     this.updateSpinners(engine);
     this.orbit?.apply(camera);
     renderer.render(scene, camera);
@@ -373,7 +375,14 @@ export class Renderer3DView implements ViewAdapter {
     layer.update(smoke.renderData, smoke.count, SMOKE_STRIDE, this.smokeSizeOf, this.smokeAlphaOf);
   }
 
-  private updateRagdolls(engine: Engine): void {
+  /**
+   * `alpha` 来自主循环的固定步长余量。
+   *
+   * 物理跑 30Hz、屏幕 60Hz 时，同一个物理状态会被渲染两帧；
+   * 不插值就是每两帧跳一下（「果冻感」）。lerp(上一步, 当前步, alpha) 把它抹平，
+   * 代价是显示比物理状态滞后不到一帧 —— 对点线骨架完全无感。
+   */
+  private updateRagdolls(engine: Engine, alpha: number): void {
     const lines = this.ragdollLines;
     if (lines === null) return;
     const ragdolls = engine.world.getRagdollOrder();
@@ -384,7 +393,7 @@ export class Renderer3DView implements ViewAdapter {
     for (const ragdoll of ragdolls) {
       const bones = ragdoll.boneCount;
       if (bones * 6 > scratch.length) continue;
-      ragdoll.writeSegments(scratch);
+      ragdoll.writeInterpolatedSegments(scratch, alpha);
       const floats = bones * 6;
       if (write + floats > maxFloats) break;
       out.set(scratch.subarray(0, floats), write);
@@ -399,11 +408,14 @@ export class Renderer3DView implements ViewAdapter {
     if (joints !== null) {
       const jointPositions = this.jointBuffer;
       let count = 0;
+      const pointScratch = this.ragdollPointScratch;
       for (const ragdoll of ragdolls) {
+        if (ragdoll.pointCount * 3 > pointScratch.length) continue;
+        ragdoll.writePointPositions(pointScratch, alpha);
         for (let i = 0; i < ragdoll.pointCount && count < MAX_JOINTS; i += 1) {
-          jointPositions[count * 3] = ragdoll.positions[i * 3] ?? 0;
-          jointPositions[count * 3 + 1] = ragdoll.positions[i * 3 + 1] ?? 0;
-          jointPositions[count * 3 + 2] = ragdoll.positions[i * 3 + 2] ?? 0;
+          jointPositions[count * 3] = pointScratch[i * 3] ?? 0;
+          jointPositions[count * 3 + 1] = pointScratch[i * 3 + 1] ?? 0;
+          jointPositions[count * 3 + 2] = pointScratch[i * 3 + 2] ?? 0;
           count += 1;
         }
       }

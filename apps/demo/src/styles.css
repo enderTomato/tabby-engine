@@ -226,6 +226,17 @@ body {
   padding: 8px 14px 0;
 }
 
+.minimap {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  /* 缩略图是 12×6 像素放大来的，必须关掉插值才是硬边像素；同时告诉浏览器别做平滑 */
+  image-rendering: pixelated;
+  background: #04070d;
+}
+
 .readouts {
   display: flex;
   flex-wrap: wrap;
@@ -370,6 +381,26 @@ body {
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
 }
 
+.diag-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.diag-actions button {
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.diag-actions button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .diag pre {
   margin: 0;
   font-size: 11px;
@@ -405,6 +436,11 @@ body {
   .readouts {
     font-size: 10px;
     gap: 3px 9px;
+  }
+
+  .minimap {
+    width: 72px;
+    height: 36px;
   }
 
   .tools button {

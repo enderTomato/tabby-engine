@@ -29,6 +29,7 @@ import {
   type EconomyDiagnostics,
   type EconomyEvents,
   type EconomyOptions,
+  type LogisticsProvider,
   type ResourceDef,
   type TerrainQuery,
   type TickReport,
@@ -64,6 +65,9 @@ export class Economy {
   private readonly seed: number;
   private readonly clock: (() => number) | null;
   private terrain: TerrainQuery | null = null;
+  private logistics: LogisticsProvider | null;
+  /** 物流统计（城市 × 2），复用缓冲，避免每 tick 分配。 */
+  private readonly logisticsStats: Int32Array;
 
   private lastDayMs = 0;
   private lastMonthMs = 0;
@@ -96,6 +100,8 @@ export class Economy {
     });
     this.bus = new EventBus<EconomyEvents>();
     this.clock = options.clock ?? null;
+    this.logistics = options.logistics ?? null;
+    this.logisticsStats = new Int32Array(this.state.cityCount * 2);
   }
 
   /** 注入初始人口/库存/金库。只在初始化与「新开一局」时调用。 */
@@ -119,9 +125,28 @@ export class Economy {
     this.state.clearScratch();
   }
 
+  /** 物流接口。可以在运行时替换（例如切换到「所有运输免费」的简化模式）。 */
+  setLogistics(provider: LogisticsProvider | null): void {
+    this.logistics = provider;
+  }
+
   /** 地形只读查询。传 null 表示「无地形约束」（测试里常用）。 */
   setTerrain(query: TerrainQuery | null): void {
     this.terrain = query;
+  }
+
+  /**
+   * 最近一次日 tick 的物流统计。
+   *
+   * `total` 只统计**有产出**的建筑（住宅不参与物流），`blocked` 是其中效率被判为 0 的数量。
+   * 没有 provider 时两者都是 0 —— 调用方据此判断「物流系统未接入」，不要把它当成「全部通畅」。
+   */
+  logisticsStatsOf(city: number): { readonly blocked: number; readonly total: number } {
+    if (!this.validCity(city)) return { blocked: 0, total: 0 };
+    return {
+      blocked: this.logisticsStats[city * 2] as number,
+      total: this.logisticsStats[city * 2 + 1] as number,
+    };
   }
 
   get speed(): GameSpeed {
@@ -372,6 +397,18 @@ export class Economy {
     const upkeep = runMaintenance(ctx, this.config.daysPerMonth);
     const outcome = runEvents(ctx, this.config.daysPerMonth);
 
+    // 物流受阻事件：每个城市每天最多一次。阈值取「半数以上生产建筑断供」——
+    // 一两个建筑断供是正常的（新盖的还没连路），半数以上才值得弹提示。
+    if (this.logistics !== null) {
+      for (let city = 0; city < this.state.cityCount; city += 1) {
+        const blocked = this.logisticsStats[city * 2] as number;
+        const total = this.logisticsStats[city * 2 + 1] as number;
+        if (total > 0 && blocked * 2 >= total) {
+          this.bus.emit('logistics-blocked', { city, blocked, total });
+        }
+      }
+    }
+
     this.lastTaxIncome = tax.taxIncome;
     this.lastUpkeep = upkeep.upkeep;
 
@@ -444,6 +481,8 @@ export class Economy {
       buildings: this.buildings,
       resources: this.resources,
       config: this.config,
+      logistics: this.logistics,
+      logisticsStats: this.logisticsStats,
     };
   }
 

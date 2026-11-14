@@ -1,4 +1,4 @@
-import type { BuildingDef, EconomyConfig, ResourceDef } from './types.js';
+import type { BuildingDef, EconomyConfig, LogisticsProvider, ResourceDef } from './types.js';
 import { RES_STRIDE } from './types.js';
 import type { EconomyState } from './state.js';
 import { clamp, inflationRatio, nextPrice } from './price.js';
@@ -9,6 +9,13 @@ export interface SystemContext {
   readonly buildings: readonly BuildingDef[];
   readonly resources: readonly ResourceDef[];
   readonly config: EconomyConfig;
+  /** 物流接口，null 表示无物流系统。 */
+  readonly logistics: LogisticsProvider | null;
+  /**
+   * 物流统计输出（长度 cityCount × 2，[受阻数, 总数] 交错）。
+   * 由 Economy 持有并复用，避免每 tick 分配数组。
+   */
+  readonly logisticsStats: Int32Array;
 }
 
 /**
@@ -18,7 +25,7 @@ export interface SystemContext {
  * 0. aggregate   派生统计（住房/岗位），只读
  * 1. production  生产
  * 2. consumption 消耗
- * 3. logistics   运输（T16 接入，当前为空实现）
+ * 3. logistics   运输（统计受阻建筑并发事件；效率修正由 production 读取）
  * 4. market      价格
  * 5. population  人口迁移
  * 6. tax         税收（月末）
@@ -75,6 +82,15 @@ export function runProduction(ctx: SystemContext): void {
     if (city < 0) continue;
 
     let scale = state.buildingEfficiency[id] as number;
+    // 物流因子在这里乘而不是写回 buildingEfficiency：
+    // efficiency 是「维护费支付比例」的累积状态（月末才变），
+    // 物流是每 tick 都可能变的瞬时状态。混在一起写会让两者互相覆盖，
+    // 症状是「交齐了维护费但建筑还是半停产」或者反之。
+    if (ctx.logistics !== null) {
+      const factor = sanitizeEfficiency(ctx.logistics.efficiencyOf(id, city));
+      state.scratchLogistics[id] = factor;
+      scale *= factor;
+    }
     if (scale <= 0.01) continue;
 
     for (let k = 0; k < def.input.length; k += 1) {
@@ -127,11 +143,54 @@ export function runConsumption(ctx: SystemContext): void {
 }
 
 /**
- * 步骤 3：运输。T16 物流模块尚未接入，这里保持空实现而不是「先随便挪一点」——
- * 占位的假逻辑一旦有人写测试依赖上，接真模块时会被当成既有行为保留。
+ * 步骤 3：运输。
+ *
+ * 职责边界值得说清楚：**效率修正不在这里做**，而是在 `runProduction` 里现查。
+ * 因为效率是「本 tick 的即时状态」，写回 `buildingEfficiency` 会和维护费的
+ * 累积逻辑打架（维护费是月末按支付比例逐步下调）。
+ *
+ * 这一步只做「发现异常并上报」：统计每个城市里完全受阻的建筑数量，
+ * 超过阈值时发 `logistics-blocked` 事件，让 UI 能弹出「补给线断了」。
+ *
+ * 为什么不是每 tick 都发：一个城市 50 个建筑全断，60Hz 下就是 3000 次/秒的事件。
+ * 这里用「每天每个城市最多一次」的节流，与 famine/bankrupt 这些事件同级。
  */
-export function runLogistics(_ctx: SystemContext): void {
-  // 故意留空：T16 接入后由物流系统改写 buildingEfficiency。
+export function runLogistics(ctx: SystemContext): void {
+  const provider = ctx.logistics;
+  if (provider === null) return;
+
+  const { state } = ctx;
+  for (let city = 0; city < state.cityCount; city += 1) {
+    let total = 0;
+    let blocked = 0;
+    for (let id = 0; id < state.capacity; id += 1) {
+      if (state.alive[id] === 0) continue;
+      if ((state.buildingCity[id] as number) !== city) continue;
+      const def = ctx.buildings[state.buildingType[id] as number];
+      // 只统计有产出的建筑：住宅不参与物流，把它们算进来会让阈值失去意义
+      if (def === undefined || def.output.length === 0) continue;
+      total += 1;
+      // 读 runProduction 写下的结果，不重新问 provider ——
+      // 否则同一天的生产系数与统计口径可能来自两次不同的查询。
+      if ((state.scratchLogistics[id] as number) <= 0.01) blocked += 1;
+    }
+    ctx.logisticsStats[city * 2] = blocked;
+    ctx.logisticsStats[city * 2 + 1] = total;
+  }
+}
+
+/**
+ * 把 provider 返回值收敛到 [0, 1]。
+ *
+ * `NaN` 必须单独挡：`NaN` 参与所有比较都是 false，
+ * 于是 `scale *= NaN` 之后 `if (scale <= 0.01)` 也不成立，产出会变成 NaN 并污染库存，
+ * 而 Float32Array 里 NaN 一旦写进去，往后所有月份的金库/价格都是 NaN，
+ * 存档再一读就永久坏掉。这类 bug 只在第三方 provider 写错时出现，但代价是整档报废。
+ */
+function sanitizeEfficiency(value: number): number {
+  if (!(value > 0)) return 0;
+  if (value > 1) return 1;
+  return value;
 }
 
 /** 步骤 4：价格。供给用「期初库存 + 本期产量」，需求用「本期消耗 + 储备缺口」。 */

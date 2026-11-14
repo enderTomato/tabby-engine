@@ -52,7 +52,13 @@ export interface PhysicsStats {
   readonly fluidCount: number;
   readonly smokeCount: number;
   readonly ragdollCount: number;
+  /** 处于休眠的布娃娃数量。城市里躺倒的尸体越多这个数越大。 */
+  readonly sleepingRagdolls: number;
   readonly obstacleCount: number;
+  /** 宽相位网格实际插入的「盒 × 格」实例数。 */
+  readonly gridInstances: number;
+  /** true 表示宽相位实例池溢出，已退化为暴力遍历。 */
+  readonly gridDegraded: boolean;
   readonly simulationTime: number;
   readonly lastStepMs: number;
 }
@@ -66,6 +72,15 @@ export interface RagdollOptions {
   /** 地面与障碍摩擦，0~1。 */
   readonly friction: number;
   readonly bounds: PhysicsBounds;
+  /**
+   * 关节弯曲软限制：相邻两骨的最小 |a-c| 占「完全伸直」的比例。
+   * 0.55 约等于关节最小夹角 120°，0.95 几乎不限制。
+   */
+  readonly bendLimit?: number;
+  /** 静止多久后进入休眠（秒）。0 表示禁用休眠。 */
+  readonly sleepDelay?: number;
+  /** 休眠速度阈值（m/s）。低于该值才算「静止」。 */
+  readonly sleepThreshold?: number;
 }
 
 export interface SmokeOptions {

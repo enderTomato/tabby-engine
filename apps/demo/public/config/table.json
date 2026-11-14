@@ -1,0 +1,22 @@
+{
+  "_comment": "覆盖配置表。删掉这个文件或让它校验失败，都会回退到 src/game/defs.ts 的内置表。",
+  "resources": [
+    { "key": "food", "label": "食物", "basePrice": 5, "elasticity": 0.9, "targetStock": 40 }
+  ],
+  "buildings": [
+    { "key": "house", "label": "住宅", "category": "housing", "output": [], "input": [], "capacity": 10, "jobs": 0, "upkeep": 2, "buildCost": 40, "footprint": 1 },
+    { "key": "farm", "label": "农田", "category": "production", "output": [[0, 6]], "input": [], "capacity": 0, "jobs": 4, "upkeep": 3, "buildCost": 60, "footprint": 1 },
+    { "key": "wall", "label": "挡板", "category": "infrastructure", "output": [], "input": [], "capacity": 0, "jobs": 0, "upkeep": 0.5, "buildCost": 15, "footprint": 1 }
+  ],
+  "config": {
+    "entityCapacity": 256,
+    "cityCount": 1,
+    "seed": 8022905,
+    "taxRate": 0.15,
+    "foodPerCapita": 0.05,
+    "incomePerCapita": 8,
+    "daysPerTick": 1,
+    "daysPerMonth": 30,
+    "monthsPerYear": 12
+  }
+}

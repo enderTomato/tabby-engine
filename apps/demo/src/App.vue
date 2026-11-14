@@ -21,6 +21,9 @@ import {
   zonesOf,
 } from './game/city';
 import { CitySimulation, TOOLS, TOOL_LABEL, costOf, type ToolKind } from './game/simulation';
+import { configHost } from './game/config-loader';
+import { HUB_TILE } from './game/logistics';
+import { indexOf } from './game/city';
 
 const BOUNDS: PhysicsBounds = { min: { x: -14, y: 0, z: -6 }, max: { x: 14, y: 16, z: 6 } };
 
@@ -38,6 +41,8 @@ const FARM_ROW = 3;
 const stageEl = ref<HTMLDivElement | null>(null);
 const canvas2d = ref<HTMLCanvasElement | null>(null);
 const canvas3d = ref<HTMLCanvasElement | null>(null);
+/** 小地图。像素数据在 `sim.minimap` 里，这里只是一块放大显示的画布。 */
+const minimapEl = ref<HTMLCanvasElement | null>(null);
 
 const mode = ref<'2d' | '3d'>('2d');
 const tool = ref<ToolKind>('house');
@@ -52,9 +57,15 @@ const diagText = ref('');
  * 包上 Proxy 之后每次 `state.cityTreasury[i]` 都会走一层拦截，
  * 而结算每帧要访问上万次。这里只把「要显示的字段」同步进 hud。
  */
-const sim = new CitySimulation(0);
+let sim = new CitySimulation(0);
 
 const hud = reactive({ ...sim.hud() });
+
+/** 配置表状态（热重载 / 覆盖表校验结果），直接显示在诊断面板里。 */
+const configStatus = ref('内置配置表');
+
+/** 分块流式加载的统计。 */
+const streamStats = reactive({ enabled: false, resident: 0, total: 0, loads: 0, unloads: 0 });
 
 const stats = reactive({
   fps: 0,
@@ -98,6 +109,16 @@ function flash(message: string): void {
 
 function refreshHud(): void {
   Object.assign(hud, sim.hud());
+
+  // 小地图：先按当前效率标脏，脏了才真正上传像素（稳态下 10Hz 里只会有 1~2 次重绘）
+  sim.refreshMinimap();
+  const mini = minimapEl.value;
+  if (mini !== null && sim.minimap.isDirty) sim.minimap.blit(mini);
+
+  const notice = sim.takeBlockedNotice();
+  if (notice !== '') flash(notice);
+
+  Object.assign(streamStats, sim.streamStats());
 }
 
 function cellFromPointer(event: PointerEvent): { col: number; row: number } | null {
@@ -114,6 +135,8 @@ function onPointerMove2D(event: PointerEvent): void {
     view2d.setHighlight(null);
     return;
   }
+  // 流式加载的焦点跟着指针：走到哪儿，附近哪几块常驻
+  sim.focusAt(indexOf(cell.col, cell.row));
   const rect = cellRect(cell.col, cell.row);
   const occupied = sim.cellAt(cell.col, cell.row) !== 0;
   view2d.setHighlight({
@@ -292,6 +315,7 @@ function onFrame(): void {
   stats.draw = s.drawCallsHint;
   stats.mode = engine.host.mode;
   stats.tier = engine.tier;
+  sim.streamStep();
   refreshHud();
   if (showDiag.value) diagText.value = collectDiagnostics();
 }
@@ -314,9 +338,56 @@ function collectDiagnostics(): string {
     `膨胀指数  ${d.inflationRatio.toFixed(3)}`,
     `日结算    ${d.lastDayMs.toFixed(3)} ms · 月结算 ${d.lastMonthMs.toFixed(3)} ms`,
     `灌溉累计  ${sim.waterIncome} 金币`,
+    '── 物流 ──',
+    `生产建筑  ${h.supplyBuildings} 座 · 断供 ${h.blockedBuildings} 座`,
+    `路网站点  ${sim.roads.graph.nodeCount} 节点 / ${sim.roads.graph.edgeCount} 有向边`,
+    `路障      挡板 ${h.roadBlocks} 处 · 枢纽格 ${HUB_TILE}`,
+    `图缓存    ${sim.roads.network.cachedSources} 棵最短路树 · 待算 ${sim.roads.network.pendingSources}`,
+    '── 分块流式 ──',
+    `常驻块    ${streamStats.resident} / ${streamStats.total}（累计加载 ${streamStats.loads}、卸载 ${streamStats.unloads}）`,
+    `存档体积  经济层 ${sim.economy.save().byteLength}B + 地图分块 ${sim.worldArchiveInfo().bytes}B（${sim.worldArchiveInfo().chunks} 块）`,
+    `小地图    缩略图 ${sim.minimap.redraws} 次重绘`,
+    '── 配置表 ──',
+    configStatus.value,
     `投影自检  ${projection.ok ? '✓' : '✗'} ${projection.detail}`,
   ].join('\n');
 }
+
+/**
+ * 重读 `public/config/table.json`。
+ *
+ * 校验不过时**不重建世界** —— 只把错误原文显示在配置状态里。
+ * 这是热重载最重要的性质：改表改到一半保存，页面不能炸。
+ */
+async function reloadConfig(): Promise<void> {
+  const result = await configHost.reload();
+  configStatus.value = result.ok
+    ? `配置：${result.source === 'override' ? '覆盖表' : '内置表'} · ${result.message}`
+    : `配置校验失败（保留旧表）\n${result.message}`;
+  if (!result.ok) flash('配置表校验失败，已保留旧配置');
+  else flash(result.changed ? '配置表已生效，世界已重建' : '配置表无变化');
+}
+
+/** 用当前配置表重建整个仿真层。热重载后必须走这条路径才能让新数值生效。 */
+function restartWorld(): void {
+  const next = new CitySimulation(0, configHost.table);
+  sim = next;
+  next.beginStreaming();
+  Object.assign(hud, next.hud());
+  streamStats.enabled = true;
+  syncCity();
+  refreshHud();
+  flash('世界已按当前配置表重建');
+}
+
+function onConfigChanged(): void {
+  configStatus.value = `配置：${configHost.result.message}`;
+  // 只有真的换了表才会走到这里（ConfigHost 用 changed 区分「能用」和「变了」）
+  // 表变了，旧实例里的建筑下标/造价全部可能失效 —— 必须重建，不能热改
+  restartWorld();
+}
+
+const unsubscribeConfig = configHost.subscribe(onConfigChanged);
 
 function saveGame(): void {
   flash(sim.saveToStorage() ? '已存档到本地' : '存档失败（可能是隐私模式禁用了 localStorage）');
@@ -382,9 +453,19 @@ onMounted(async () => {
   ]);
 
   sim.setSpeed(speed.value);
+  sim.beginStreaming();
+  streamStats.enabled = true;
   syncCity();
   refreshHud();
+  sim.minimap.invalidate();
+  if (minimapEl.value !== null) sim.minimap.blit(minimapEl.value);
   setMode('2d');
+
+  // 覆盖表存在且合法才替换世界；大多数构建里没有这个文件，会安静地回退到内置表
+  const loaded = await configHost.reload();
+  configStatus.value = loaded.ok
+    ? `配置：${loaded.source === 'override' ? '覆盖表' : '内置表'} · ${loaded.message}`
+    : `配置校验失败（保留旧表）\n${loaded.message}`;
 
   canvas2d.value.addEventListener('pointermove', onPointerMove2D);
   canvas2d.value.addEventListener('pointerdown', onPointerDown2D);
@@ -407,6 +488,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  unsubscribeConfig();
   resizeObserver?.disconnect();
   resizeObserver = null;
   canvas2d.value?.removeEventListener('pointermove', onPointerMove2D);
@@ -464,6 +546,11 @@ onBeforeUnmount(() => {
           <span>💰</span>
           <b>{{ hud.treasury }}</b>
         </div>
+        <canvas
+          ref="minimapEl"
+          class="minimap"
+          :title="`小地图：金格=市政厅，暗红=断供。常驻 ${streamStats.resident}/${streamStats.total} 块`"
+        />
         <ul class="readouts">
           <li><em>日期</em>{{ hud.year }} 年 {{ hud.month }} 月 {{ hud.day }} 日</li>
           <li><em>人口</em>{{ hud.population }} / {{ hud.housing }}</li>
@@ -472,6 +559,10 @@ onBeforeUnmount(() => {
           <li><em>存粮</em>{{ hud.foodStock.toFixed(0) }} <small>产 {{ hud.foodProduced.toFixed(0) }}/日</small></li>
           <li><em>灌溉</em>{{ hud.waterIncome }} <small>金币</small></li>
           <li><em>建筑</em>房 {{ hud.houseCount }} · 田 {{ hud.farmCount }} · 墙 {{ hud.wallCount }}</li>
+          <li :class="{ bad: hud.blockedBuildings > 0 }">
+            <em>物流</em>{{ hud.supplyBuildings - hud.blockedBuildings }} / {{ hud.supplyBuildings }} 通
+            <small v-if="hud.blockedBuildings > 0">断 {{ hud.blockedBuildings }}</small>
+          </li>
         </ul>
       </div>
 
@@ -508,6 +599,10 @@ onBeforeUnmount(() => {
     </footer>
 
     <aside v-if="showDiag" class="diag">
+      <div class="diag-actions">
+        <button type="button" @click="reloadConfig">重读配置表</button>
+        <button type="button" @click="restartWorld">重建世界</button>
+      </div>
       <pre>{{ diagText || '采集中…' }}</pre>
     </aside>
   </div>

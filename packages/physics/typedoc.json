@@ -1,0 +1,13 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "Tabby Physics",
+  "entryPoints": ["src/api/public.ts", "src/api/extension.ts", "src/api/presets.ts"],
+  "entryPointStrategy": "expand",
+  "out": "docs/api",
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "readme": "README.md",
+  "navigationLinks": {
+    "仓库": "https://github.com/enderTomato/tabby-engine"
+  }
+}

@@ -95,6 +95,29 @@ export interface EconomyConfig {
   readonly monthsPerYear: number;
 }
 
+/**
+ * 物流查询接口（依赖倒置）。
+ *
+ * 经济层不认识 `@tabby/graph`，只认识这个 interface —— 这样可以单独发布、
+ * 单独单测（那 20 项测试跑在纯 Node 里，没有任何图结构），
+ * 上层也能换成「全部免费」的简化实现。
+ *
+ * 实现方（demo 或 graph 包的适配器）负责把 buildingId 映射到地块/图节点。
+ */
+export interface LogisticsProvider {
+  /**
+   * 该建筑本 tick 的运输效率系数，取值 [0, 1]。
+   *
+   * - 1 表示运输通畅，无惩罚；
+   * - 0 表示补给中断，该建筑停产；
+   * - 中间值按比例缩产。
+   *
+   * 调用频率是「每建筑每 tick 一次」，实现方必须自己缓存，
+   * 不要在里面跑最短路。
+   */
+  efficiencyOf(buildingId: number, city: number): number;
+}
+
 export interface EconomyOptions extends Partial<EconomyConfig> {
   readonly resourceDefs?: readonly ResourceDef[];
   readonly buildingDefs?: readonly BuildingDef[];
@@ -104,6 +127,8 @@ export interface EconomyOptions extends Partial<EconomyConfig> {
    * 需要性能数据的地方（demo 的诊断面板）自己注入一个。
    */
   readonly clock?: () => number;
+  /** 物流接口。不传表示没有物流系统，所有建筑按满效率运行。 */
+  readonly logistics?: LogisticsProvider | null;
 }
 
 /** 城市级只读快照，给 UI / 诊断用。结算内部不构造对象。 */
@@ -174,5 +199,7 @@ export interface EconomyEvents {
   'building-placed': { readonly id: number; readonly city: number; readonly tile: number; readonly def: number };
   /** `tile` 是拆除前的格子下标：实体销毁后 `state.buildingTile[id]` 是 -1，订阅方只能靠它定位。 */
   'building-removed': { readonly id: number; readonly city: number; readonly def: number; readonly tile: number };
+  /** 物流中断：某城市的受阻建筑数超过阈值。每个城市每天最多发一次。 */
+  'logistics-blocked': { readonly city: number; readonly blocked: number; readonly total: number };
   warning: { readonly code: string; readonly message: string };
 }

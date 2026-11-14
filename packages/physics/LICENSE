@@ -1,0 +1,17 @@
+Mozilla Public License Version 2.0
+==================================
+
+本文件（连同本目录下的源码）受 Mozilla Public License Version 2.0 条款约束。
+条款全文见 https://mozilla.org/MPL/2.0/ ，SPDX 标识符：MPL-2.0
+
+This Source Code Form is subject to the terms of the Mozilla Public License,
+v. 2.0. If a copy of the MPL was not distributed with this file, You can
+obtain one at https://mozilla.org/MPL/2.0/ .
+
+为什么这里放的是一段声明而不是全文：
+MPL-2.0 要求分发者提供许可证副本，同时要求修改过的文件保持 MPL 覆盖。
+在 monorepo 里维护 20 份 370 行的许可证全文没有实际价值，反而容易让副本过期。
+本仓库的完整分层说明见根目录 LICENSING.md，归档发布（GitHub Release 的
+source zip）中附带全文。
+
+Copyright (c) 2026 enderTomato

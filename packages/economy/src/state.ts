@@ -51,6 +51,14 @@ export class EconomyState {
   /** 本日产量 / 消耗量，用于市场结算。 */
   readonly scratchProduced: Float32Array;
   readonly scratchConsumed: Float32Array;
+  /**
+   * 本 tick 每栋建筑的物流系数，由 `runProduction` 写入、`runLogistics` 读取。
+   *
+   * 存在的理由是**只问一次**：物流 provider 可能是图查询实现，
+   * 生产统计各调一次就是双倍开销，而且两次调用之间若 provider 状态变了
+   * （路网刚重算），会出现「产出按 0.8 算、事件统计按 0 算」的自相矛盾。
+   */
+  readonly scratchLogistics: Float32Array;
 
   day = 1;
   month = 1;
@@ -89,6 +97,7 @@ export class EconomyState {
     this.priceTarget = new Float32Array(RES_STRIDE);
     this.scratchProduced = new Float32Array(citySlots);
     this.scratchConsumed = new Float32Array(citySlots);
+    this.scratchLogistics = new Float32Array(this.capacity).fill(1);
 
     // 倒序排布后 pop，保证首次分配的 id 是 0、1、2…（与「创建顺序」一致，便于人工读存档）
     this.freeList = new Int32Array(this.capacity);
@@ -149,6 +158,8 @@ export class EconomyState {
   clearScratch(): void {
     this.scratchProduced.fill(0);
     this.scratchConsumed.fill(0);
+    // 默认 1 而不是 0：没跑生产的建筑（住宅）不该被当成断供。
+    this.scratchLogistics.fill(1);
     this.cityHousing.fill(0);
     this.cityJobs.fill(0);
     this.cityEmployed.fill(0);

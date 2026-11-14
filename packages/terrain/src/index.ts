@@ -4,3 +4,8 @@ export * from './height-field.js';
 export * from './normal.js';
 export * from './chunk.js';
 export * from './loader.js';
+export * from './mesh.js';
+export * from './edit.js';
+export * from './geo.js';
+export * from './derive.js';
+export * from './geotiff.js';
