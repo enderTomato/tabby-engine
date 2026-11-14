@@ -257,14 +257,19 @@ export class Economy {
     if (id < 0 || id >= this.state.capacity || this.state.alive[id] === 0) {
       return this.reject('no-such-building', `实体 ${id} 不存在或已拆除`);
     }
-    const def = this.buildings[this.state.buildingType[id] as number];
+    // 这三个值必须在 destroy 之前抓下来。destroy 会把 type 归零、tile 置 -1，
+    // 曾经这里在 destroy 之后读 state.buildingType[id] 发事件，等于所有拆除都报 def=0，
+    // 订阅方按 def 更新投影时会把农田拆成住宅。
+    const defIndex = this.state.buildingType[id] as number;
+    const tile = this.state.buildingTile[id] as number;
+    const def = this.buildings[defIndex];
     const city = this.state.buildingCity[id] as number;
     if (def !== undefined && this.validCity(city)) {
       this.addTreasury(city, Math.floor(def.buildCost * 0.5));
     }
     this.state.destroy(id);
     aggregate(this.context());
-    this.bus.emit('building-removed', { id, city, def: this.state.buildingType[id] as number });
+    this.bus.emit('building-removed', { id, city, def: defIndex, tile });
     return true;
   }
 

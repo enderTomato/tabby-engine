@@ -193,9 +193,20 @@ export function runPopulation(ctx: SystemContext): void {
     const free = Math.max(0, housing - pop);
     let delta = pop * drift;
     if (delta > 0) delta = Math.min(delta, free);
-    // 人口用整数域：Float32 在 1600 万以内整数精确，城市人口远达不到这个量级，
-    // 但保留 round 是为了「同一天不同设备算出同样的小数」这种隐患不存在
-    const next = Math.max(0, Math.round(pop + delta));
+    /*
+     * 这里**不能** round/floor。
+     *
+     * 曾经写的是 `Math.round(pop + delta)`，理由是「人口应该取整」。
+     * 结果是小城市彻底锁死：8 人、满意度 0.95 时 delta = 8 × 0.45 × 0.08 = 0.288，
+     * round(8.288) 还是 8 —— 每天白算一次，永远长不大。反过来人口衰减也一样，
+     * 8 人的村子断了粮也不掉人。阈值大约在 1 / (0.045 × 0.08) ≈ 15 人，
+     * 也就是「新手村永远停在 8 人」这种最难被察觉的形态。
+     *
+     * 改法：允许小数，只在展示层取整（`CitySnapshot` 的消费方自己 round）。
+     * Float32 的加减乘是 IEEE754 精确定义的，跨设备逐位一致，不会破坏确定性；
+     * 真正需要担心的是 Math.pow 这类超越函数，这里没有。
+     */
+    const next = Math.max(0, pop + delta);
     state.cityPopulation[city] = next;
 
     if (next > 0 && jobs > 0) state.cityEmployed[city] = Math.min(next, jobs);

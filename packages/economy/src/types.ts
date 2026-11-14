@@ -109,6 +109,7 @@ export interface EconomyOptions extends Partial<EconomyConfig> {
 /** 城市级只读快照，给 UI / 诊断用。结算内部不构造对象。 */
 export interface CitySnapshot {
   readonly id: number;
+  /** 可能带小数（日增量常小于 1）。要显示人数请自己 `Math.round`。 */
   readonly population: number;
   readonly taxRate: number;
   readonly satisfaction: number;
@@ -171,6 +172,7 @@ export interface EconomyEvents {
   'tick-skipped': { readonly count: number; readonly day: number };
   /** 走指令队列放置时也需要拿到实体 id，否则调用方无法再对它发指令。 */
   'building-placed': { readonly id: number; readonly city: number; readonly tile: number; readonly def: number };
-  'building-removed': { readonly id: number; readonly city: number; readonly def: number };
+  /** `tile` 是拆除前的格子下标：实体销毁后 `state.buildingTile[id]` 是 -1，订阅方只能靠它定位。 */
+  'building-removed': { readonly id: number; readonly city: number; readonly def: number; readonly tile: number };
   warning: { readonly code: string; readonly message: string };
 }
