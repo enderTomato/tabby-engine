@@ -22,8 +22,8 @@
  */
 
 import type { BuildingDef, ResourceDef, EconomyConfig } from '@tabby/economy';
-import { BUILTIN_TABLE, formatErrors, validateTable, type ConfigTable, type ConfigError } from './config-table';
-import { DEMO_BUILDINGS, DEMO_CONFIG, DEMO_RESOURCES } from './defs';
+import { BUILTIN_TABLE, formatErrors, validateTable, type ConfigTable, type ConfigError } from './config-table.js';
+import { DEMO_BUILDINGS, DEMO_CONFIG, DEMO_RESOURCES } from './defs.js';
 
 /** 覆盖表的默认位置。放在 `public/` 下所以能被 fetch 到，且不参与打包。 */
 export const OVERRIDE_URL = 'config/table.json';

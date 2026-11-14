@@ -7,9 +7,9 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { Cell, GRID_COLS, GRID_ROWS, TILE_COUNT, indexOf } from '../src/game/city';
-import { HUB_TILE, ROAD_FREE_DISTANCE } from '../src/game/logistics';
-import { CitySimulation } from '../src/game/simulation';
+import { Cell, GRID_COLS, GRID_ROWS, TILE_COUNT, indexOf } from '@tabby/gameplay';
+import { HUB_TILE, ROAD_FREE_DISTANCE } from '@tabby/gameplay';
+import { CitySimulation } from '@tabby/gameplay';
 
 let sim: CitySimulation;
 

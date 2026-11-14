@@ -40,7 +40,7 @@
  * 它不是为了防篡改 —— 防篡改需要签名，那是另一个量级的事。
  */
 
-import { GRID_COLS, GRID_ROWS, TILE_COUNT } from './city';
+import { GRID_COLS, GRID_ROWS, TILE_COUNT } from './city.js';
 
 const MAGIC = 0x4b434254; // "TBCK" little-endian
 const VERSION = 1;

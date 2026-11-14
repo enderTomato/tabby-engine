@@ -13,9 +13,9 @@ import {
   formatErrors,
   validateTable,
   type ConfigTable,
-} from '../src/game/config-table';
-import { ConfigHost, asConfigTable } from '../src/game/config-loader';
-import { DEMO_BUILDINGS, DEMO_CONFIG, DEMO_RESOURCES } from '../src/game/defs';
+} from '@tabby/gameplay';
+import { ConfigHost, asConfigTable } from '@tabby/gameplay';
+import { DEMO_BUILDINGS, DEMO_CONFIG, DEMO_RESOURCES } from '@tabby/gameplay';
 
 function clone(): ConfigTable {
   return {

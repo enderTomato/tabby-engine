@@ -14,7 +14,7 @@
     "resolveJsonModule": true,
     "noEmit": true,
     "jsx": "preserve",
-    "types": ["vite/client", "vitest/globals"]
+    "types": ["vite/client", "vitest/globals", "node"]
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "src/**/*.d.ts", "tests/**/*.ts", "vite.config.ts"]
 }

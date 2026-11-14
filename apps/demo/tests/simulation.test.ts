@@ -7,9 +7,9 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { Cell, GRID_COLS, GRID_ROWS, TILE_COUNT } from '../src/game/city';
-import { INITIAL_POPULATION, INITIAL_TREASURY, MAX_FARMS } from '../src/game/defs';
-import { CitySimulation, COST } from '../src/game/simulation';
+import { Cell, GRID_COLS, GRID_ROWS, TILE_COUNT } from '@tabby/gameplay';
+import { INITIAL_POPULATION, INITIAL_TREASURY, MAX_FARMS } from '@tabby/gameplay';
+import { CitySimulation, COST } from '@tabby/gameplay';
 
 let sim: CitySimulation;
 

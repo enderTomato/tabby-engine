@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { Cell, GRID_COLS, GRID_ROWS, TILE_COUNT, indexOf } from '../src/game/city';
+import { Cell, GRID_COLS, GRID_ROWS, TILE_COUNT, indexOf } from '@tabby/gameplay';
 import {
   CHUNKS_X,
   CHUNKS_Y,
@@ -20,7 +20,7 @@ import {
   readChunk,
   readDirectory,
   splitChunks,
-} from '../src/game/chunkstore';
+} from '@tabby/gameplay';
 
 function makeWorld(): { cells: Int8Array; entities: Int32Array } {
   const cells = new Int8Array(TILE_COUNT);

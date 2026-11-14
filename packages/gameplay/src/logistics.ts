@@ -22,7 +22,7 @@
  */
 
 import { CityLogistics, LogisticsNetwork, TileLogistics, TransportGraph } from '@tabby/graph';
-import { CELL_SIZE, GRID_COLS, GRID_ROWS, TILE_COUNT, indexOf } from './city';
+import { CELL_SIZE, GRID_COLS, GRID_ROWS, TILE_COUNT, indexOf } from './city.js';
 
 /**
  * 市政厅所在地块 —— 路网的单源。

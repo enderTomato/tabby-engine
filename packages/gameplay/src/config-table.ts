@@ -21,7 +21,7 @@
  */
 
 import type { BuildingDef, EconomyConfig, ResourceDef } from '@tabby/economy';
-import { DEMO_BUILDINGS, DEMO_CONFIG, DEMO_RESOURCES } from './defs';
+import { DEMO_BUILDINGS, DEMO_CONFIG, DEMO_RESOURCES } from './defs.js';
 
 export interface ConfigError {
   /** JSON 路径，例如 `buildings[2].category`。 */

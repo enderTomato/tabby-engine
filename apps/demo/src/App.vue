@@ -5,27 +5,33 @@ import type { PhysicsBounds } from '@tabby/physics';
 import { Renderer2DView, type BoxSpec } from '@tabby/render2d';
 import { RenderBridge, Renderer3DView, type Box3DSpec, type OccluderBox } from '@tabby/render3d';
 import { InputManager } from '@tabby/input';
-import { gsap } from 'gsap';
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import {
   CELL_COLOR,
   CELL_HEIGHT,
   CELL_SIZE,
+  CITY_KNOBS,
+  CitySimulation,
+  HUB_TILE,
+  TOOLS,
+  TOOL_LABEL,
+  configHost,
+  costOf,
+  createCityKnobPanel,
+  cellFromWorld,
+  cellRect,
+  indexOf,
+  obstaclesOf,
+  zSpanOf,
+  zonesOf,
   GRID_COLS,
   GRID_ROWS,
   TOWER,
   WORLD_MIN_X,
-  cellFromWorld,
-  cellRect,
-  obstaclesOf,
-  zSpanOf,
-  zonesOf,
-} from './game/city';
-import { CitySimulation, TOOLS, TOOL_LABEL, costOf, type ToolKind } from './game/simulation';
-import { configHost } from './game/config-loader';
-import { KNOBS } from './game/debug';
-import { HUB_TILE } from './game/logistics';
-import { indexOf } from './game/city';
+  type ToolKind,
+} from '@tabby/gameplay';
+import { LabelPool, ToastQueue, type KnobPanel, type LabelVisual } from '@tabby/ui';
+import { gsap } from 'gsap';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
 const BOUNDS: PhysicsBounds = { min: { x: -14, y: 0, z: -6 }, max: { x: 14, y: 16, z: 6 } };
 
@@ -51,9 +57,18 @@ const overlayEl = ref<HTMLDivElement | null>(null);
 const mode = ref<'2d' | '3d'>('2d');
 const tool = ref<ToolKind>('house');
 const speed = ref<1 | 2 | 4>(2);
-const toast = ref('欢迎来到 Tabby Engine 测试用例');
 const showDiag = ref(false);
 const diagText = ref('');
+
+/**
+ * Toast 走队列而不是一个字符串。
+ *
+ * 一个 `ref<string>` 的问题是「后一条覆盖前一条」：玩家连点建造，
+ * 提示全被冲掉，等于没有提示。队列在 `onFrame` 里 10Hz 推进一次，
+ * 只有当前该显示的那条变了才写 ref —— 队列本身不进响应式。
+ */
+const toastQueue = new ToastQueue({ ttlMs: 2200 });
+const toast = ref('欢迎来到 Tabby Engine 测试用例');
 
 /**
  * 仿真层在 setup 顶层构造：它不碰 DOM，只跑经济内核的构造与种子放置。
@@ -69,26 +84,41 @@ const hud = reactive({ ...sim.hud() });
 const configStatus = ref('内置配置表');
 
 /**
- * 调参面板的当前值。
+ * 调参面板。
  *
- * 这是**唯一允许存副本**的地方：滑块需要双向绑定，而真实值散在
- * Economy / CityLogistics / CitySimulation 三处。`syncKnobs()` 会从世界里重读，
+ * `knobValues` 是**唯一允许存副本**的地方：滑块需要双向绑定，而真实值散在
+ * Economy / CityLogistics / CitySimulation 三处。`KnobPanel.refresh()` 会从世界里重读，
  * 所以读档、热重载、外部改参数之后调一次即可，不必担心面板撒谎。
+ *
+ * 面板自己也是「写入后回读确认」的 —— 写不进世界就把滑块弹回真实值，
+ * 失败原因通过 `knobFeedbacks` 显示在滑块下面。
  */
+let knobPanel: KnobPanel | null = null;
 const knobValues = reactive<Record<string, number>>({});
 const knobFeedbacks = reactive<Record<string, string>>({});
+/** 面板上要渲染的旋钮定义。`CitySimulation` 换了实例也还是同一批。 */
+const knobSpecs = CITY_KNOBS;
+
+function bindKnobs(): void {
+  knobPanel = createCityKnobPanel(sim);
+  for (const id of Object.keys(knobValues)) delete knobValues[id];
+  for (const id of Object.keys(knobFeedbacks)) delete knobFeedbacks[id];
+  Object.assign(knobValues, knobPanel.values);
+  for (const spec of knobPanel.specs) knobFeedbacks[spec.id] = '';
+}
 
 function syncKnobs(): void {
-  for (const knob of KNOBS) knobValues[knob.id] = knob.read(sim);
+  if (knobPanel === null) return;
+  knobPanel.refresh();
+  Object.assign(knobValues, knobPanel.values);
 }
 
 function applyKnob(id: string, value: number): void {
-  const knob = KNOBS.find((item) => item.id === id);
-  if (knob === undefined) return;
-  const ok = knob.write(sim, value);
-  // 无论成功与否都从世界重读：写失败时滑块要弹回真实值，而不是停在假值上
-  knobValues[id] = knob.read(sim);
-  knobFeedbacks[id] = ok ? '' : '未生效（可能被内核钳制）';
+  if (knobPanel === null) return;
+  const result = knobPanel.apply(id, value);
+  // 无论成功与否都以世界回读值为准：写失败时滑块弹回真实值，而不是停在假值上
+  knobValues[id] = result.actual;
+  knobFeedbacks[id] = result.reason;
   refreshHud();
 }
 
@@ -129,10 +159,10 @@ const hint = computed(() =>
 );
 
 function flash(message: string): void {
-  toast.value = message;
-  window.setTimeout(() => {
-    if (toast.value === message) toast.value = '';
-  }, 1800);
+  toastQueue.push(message);
+  // 立刻同步一次：push 之后队首可能还是上一条（上一条还没到期），
+  // 这时不该抢显示权，等它过期自然会轮到新的
+  toast.value = toastQueue.peek() ?? '';
 }
 
 function refreshHud(): void {
@@ -149,9 +179,7 @@ function refreshHud(): void {
   Object.assign(streamStats, sim.streamStats());
   refreshLabelText();
   // 速度可能被按钮改过；每 10Hz 对齐一次滑块，避免面板与真实状态漂移
-  if (showDiag.value) {
-    for (const knob of KNOBS) knobValues[knob.id] = knob.read(sim);
-  }
+  if (showDiag.value) syncKnobs();
 }
 
 /** 把元素内坐标（CSS 像素）转成格子。InputManager 给的坐标已经是元素内坐标。 */
@@ -217,9 +245,22 @@ let input3d: InputManager | null = null;
  *
  * 每帧把建筑的头顶坐标投影成屏幕坐标，再直接写 DOM 的 `transform`
  * （不进 Vue 响应式：20 个标签 × 60fps 的响应式更新会把 CPU 预算吃光）。
+ *
+ * 元素的创建/复用/隐藏交给 `@tabby/ui` 的 `LabelPool`：它按 index 池化，
+ * 位置每帧写、文字走差异比较，本帧用不到的标签用 `visibility` 藏起来
+ * （那是重绘不是重排，比 `display: none` 便宜）。
  */
 const renderBridge = new RenderBridge({ minSeparation: 46, occlusionBias: 0.4 });
-const labelPool: HTMLDivElement[] = [];
+let labelPool: LabelPool | null = null;
+/**
+ * 标签文字缓存。
+ *
+ * 文字 10Hz 变一次、位置每帧变，所以两者分开算：`refreshLabelText` 只改这两条数组，
+ * `syncLabels` 每帧把它们拼进 `LabelVisual` 交给池子。分开之后
+ * 「文字没变就不碰 DOM」这条优化才有地方落脚。
+ */
+const labelTexts: string[] = [];
+const labelBad: boolean[] = [];
 let labelSyncCount = 0;
 
 function drawBox2D(spec: BoxSpec): void {
@@ -329,18 +370,17 @@ function refreshLabelText(): void {
   const labels = renderBridge.labels;
   for (let i = 0; i < labels.length; i += 1) {
     const label = labels[i];
-    const el = labelPool[i];
-    if (label === undefined || el === undefined) continue;
+    if (label === undefined) continue;
     const id = label.id;
     if (id.startsWith('farm-')) {
       const [col, row] = id.slice(5).split('-').map(Number) as [number, number];
       const entity = sim.entityOfTile(indexOf(col, row));
       const eff = entity >= 0 ? sim.roads.logistics.efficiencyOf(entity, sim.city) : 1;
-      el.dataset.text = eff <= 0.01 ? '断供' : `效率 ${Math.round(eff * 100)}%`;
-      el.classList.toggle('bad', eff <= 0.01);
+      labelTexts[i] = eff <= 0.01 ? '断供' : `效率 ${Math.round(eff * 100)}%`;
+      labelBad[i] = eff <= 0.01;
     } else {
-      el.dataset.text = '住宅';
-      el.classList.remove('bad');
+      labelTexts[i] = '住宅';
+      labelBad[i] = false;
     }
   }
 }
@@ -512,33 +552,30 @@ function onFixed(dt: number): void {
 function syncLabels(): void {
   const host = overlayEl.value;
   if (host === null || view3d === null) return;
-  const matrices = view3d.cameraMatrices;
-  if (matrices === null) {
-    host.style.display = 'none';
+  const labels3d = view3d.cameraMatrices;
+  const pool = labelPool;
+  if (labels3d === null || mode.value !== '3d' || pool === null) {
+    pool?.hideAll();
     return;
   }
-  host.style.display = mode.value === '3d' ? '' : 'none';
-  if (mode.value !== '3d') return;
 
-  const labels = renderBridge.update(matrices, { width: host.clientWidth, height: host.clientHeight });
-  while (labelPool.length < labels.length) {
-    const el = document.createElement('div');
-    el.className = 'float-label';
-    host.appendChild(el);
-    labelPool.push(el);
-  }
-  for (let i = 0; i < labelPool.length; i += 1) {
-    const el = labelPool[i] as HTMLDivElement;
+  const labels = renderBridge.update(labels3d, { width: host.clientWidth, height: host.clientHeight });
+  // 每帧重建这个小数组是唯一可接受的分配：它的长度就是当前城市里的建筑数（≤72），
+  // 而池子内部的元素是完全复用的 —— 真正贵的那部分没有分配。
+  const visual: LabelVisual[] = [];
+  for (let i = 0; i < labels.length; i += 1) {
     const label = labels[i];
-    if (label === undefined || !label.visible) {
-      el.style.display = 'none';
-      continue;
-    }
-    el.style.display = '';
-    // 先缩放再位移：transform 的顺序会影响结果，缩放放在左边才是"以自身为原点放大"
-    el.style.transform = `translate3d(${label.x.toFixed(1)}px, ${label.y.toFixed(1)}px, 0) scale(${label.scale.toFixed(2)})`;
-    el.textContent = el.dataset.text ?? '';
+    if (label === undefined) continue;
+    visual.push({
+      x: label.x,
+      y: label.y,
+      scale: label.scale,
+      visible: label.visible,
+      text: labelTexts[i] ?? '',
+      bad: labelBad[i] === true,
+    });
   }
+  pool.apply(visual);
   labelSyncCount += 1;
 }
 
@@ -558,6 +595,8 @@ function onFrame(): void {
   sim.streamStep();
   refreshHud();
   syncLabels();
+  // toast 也走 10Hz：队首到期后队列会顶上下一条，变了才写 ref
+  if (toastQueue.prune()) toast.value = toastQueue.peek() ?? '';
   if (showDiag.value) diagText.value = collectDiagnostics();
 }
 
@@ -616,7 +655,7 @@ function restartWorld(): void {
   next.beginStreaming();
   Object.assign(hud, next.hud());
   streamStats.enabled = true;
-  syncKnobs();
+  bindKnobs();
   syncCity();
   refreshHud();
   flash('世界已按当前配置表重建');
@@ -652,6 +691,8 @@ onMounted(async () => {
   view2d = new Renderer2DView({ canvas: canvas2d.value });
   // 输入统一由 @tabby/input 的 InputManager 处理，视图不能再自己绑一份
   view3d = new Renderer3DView({ canvas: canvas3d.value, manageInput: false });
+  // 标签池必须晚于 overlay 元素存在（v-if 里没它，ref 在 mounted 时已就绪）
+  if (overlayEl.value !== null) labelPool = new LabelPool(overlayEl.value);
 
   engine = await Engine.create({
     bounds: BOUNDS,
@@ -698,7 +739,7 @@ onMounted(async () => {
   sim.setSpeed(speed.value);
   sim.beginStreaming();
   streamStats.enabled = true;
-  syncKnobs();
+  bindKnobs();
   syncCity();
   refreshHud();
   sim.minimap.invalidate();
@@ -738,6 +779,8 @@ onBeforeUnmount(() => {
   input2d = null;
   input3d = null;
   animation.dispose();
+  labelPool?.dispose();
+  labelPool = null;
   (window as unknown as { __tabby?: Engine }).__tabby = undefined;
   engine?.dispose();
   engine = null;
@@ -849,7 +892,7 @@ onBeforeUnmount(() => {
         <button type="button" @click="syncKnobs">重读参数</button>
       </div>
       <div class="knobs">
-        <label v-for="knob in KNOBS" :key="knob.id" :title="knob.hint">
+        <label v-for="knob in knobSpecs" :key="knob.id" :title="knob.hint">
           <span class="knob-name">{{ knob.label }}</span>
           <input
             type="range"

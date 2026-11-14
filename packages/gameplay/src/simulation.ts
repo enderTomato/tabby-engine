@@ -15,10 +15,11 @@
  */
 
 import { Economy, RES_STRIDE, buildingIndexOf, type EconomyDiagnostics } from '@tabby/economy';
-import { Cell, TILE_COUNT, indexOf, inGrid, type CellKind } from './city';
-import { BUILTIN_TABLE, type ConfigTable } from './config-table';
-import { Minimap } from './minimap';
-import { CityRoads, HUB_TILE } from './logistics';
+import { Minimap } from '@tabby/ui';
+import { Cell, TILE_COUNT, indexOf, inGrid, type CellKind } from './city.js';
+import { BUILTIN_TABLE, type ConfigTable } from './config-table.js';
+import { CITY_MINIMAP_SPEC } from './minimap-spec.js';
+import { CityRoads, HUB_TILE } from './logistics.js';
 import {
   CHUNKS_X,
   CHUNKS_Y,
@@ -28,14 +29,14 @@ import {
   readAllChunks,
   readDirectory,
   splitChunks,
-} from './chunkstore';
+} from './chunkstore.js';
 import {
   DEMO_BUILDINGS,
   INITIAL_FOOD,
   INITIAL_POPULATION,
   INITIAL_TREASURY,
   MAX_FARMS,
-} from './defs';
+} from './defs.js';
 
 export type ToolKind = 'house' | 'farm' | 'wall' | 'remove';
 export type BuildTool = Exclude<ToolKind, 'remove'>;
@@ -181,7 +182,7 @@ export class CitySimulation {
     this.table = table;
     this.cells = new Int8Array(TILE_COUNT);
     this.entityAt = new Int32Array(TILE_COUNT).fill(-1);
-    this.minimap = new Minimap(this.cells);
+    this.minimap = new Minimap(CITY_MINIMAP_SPEC, this.cells);
     this.clock = () => performance.now();
 
     this.toolDef = {
