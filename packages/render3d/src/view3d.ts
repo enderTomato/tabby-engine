@@ -34,6 +34,15 @@ export interface Renderer3DViewOptions {
 }
 
 const MAX_RAGDOLL_VERTS = 6 * 40 * 2;
+/** 关节点上限：36 个布娃娃 × 9 点，够用且固定分配。 */
+const MAX_JOINTS = 96;
+const EMPTY_F32 = new Float32Array(0);
+
+// 渲染热路径上不允许每帧新建闭包：常量回调提到模块级，只创建一次。
+const FLUID_SIZE = (): number => 0.42;
+const FLUID_ALPHA = (): number => 0.85;
+const JOINT_SIZE = (): number => 0.22;
+const JOINT_ALPHA = (): number => 0.9;
 
 /**
  * 3D 视图（Three.js）。
@@ -67,6 +76,14 @@ export class Renderer3DView implements ViewAdapter {
   private readonly matrix = new THREE.Matrix4();
   private readonly color = new THREE.Color();
   private readonly ragdollScratch = new Float32Array(512);
+  /** 关节点位置缓冲，跨帧复用，避免每帧分配触发 GC。 */
+  private readonly jointBuffer = new Float32Array(MAX_JOINTS * 3);
+  /** 当前帧的烟雾数据引用，供下方两个常量回调读取。 */
+  private smokeData: Float32Array = EMPTY_F32;
+  private readonly smokeSizeOf = (index: number): number =>
+    (this.smokeData[index * SMOKE_STRIDE + 3] ?? 0.4) * 2.2;
+  private readonly smokeAlphaOf = (index: number): number =>
+    Math.max(0, 1 - (this.smokeData[index * SMOKE_STRIDE + 4] ?? 0)) * 0.8;
   private static readonly EMPTY = new Float32Array(0);
 
   constructor(options: Renderer3DViewOptions) {
@@ -345,31 +362,26 @@ export class Renderer3DView implements ViewAdapter {
       layer.update(Renderer3DView.EMPTY, 0, 3);
       return;
     }
-    layer.update(positions, engine.fluidCount, 3, () => 0.42, () => 0.85);
+    layer.update(positions, engine.fluidCount, 3, FLUID_SIZE, FLUID_ALPHA);
   }
 
   private updateSmoke(engine: Engine): void {
     const layer = this.smoke;
     if (layer === null) return;
     const smoke = engine.world.smoke;
-    layer.update(
-      smoke.renderData,
-      smoke.count,
-      SMOKE_STRIDE,
-      (i) => (smoke.renderData[i * SMOKE_STRIDE + 3] ?? 0.4) * 2.2,
-      (i) => Math.max(0, 1 - (smoke.renderData[i * SMOKE_STRIDE + 4] ?? 0)) * 0.8,
-    );
+    this.smokeData = smoke.renderData;
+    layer.update(smoke.renderData, smoke.count, SMOKE_STRIDE, this.smokeSizeOf, this.smokeAlphaOf);
   }
 
   private updateRagdolls(engine: Engine): void {
     const lines = this.ragdollLines;
     if (lines === null) return;
-    const ragdolls = engine.world.getRagdolls();
+    const ragdolls = engine.world.getRagdollOrder();
     const out = this.ragdollBuffer;
     const maxFloats = out.length;
     const scratch = this.ragdollScratch;
     let write = 0;
-    for (const ragdoll of ragdolls.values()) {
+    for (const ragdoll of ragdolls) {
       const bones = ragdoll.boneCount;
       if (bones * 6 > scratch.length) continue;
       ragdoll.writeSegments(scratch);
@@ -385,17 +397,17 @@ export class Renderer3DView implements ViewAdapter {
     // 关节点：布娃娃贴地后只剩二维骨架，用点把关节"点"出来更好读
     const joints = this.ragdollJoints;
     if (joints !== null) {
-      const jointPositions = new Float32Array(96 * 3);
+      const jointPositions = this.jointBuffer;
       let count = 0;
-      for (const ragdoll of ragdolls.values()) {
-        for (let i = 0; i < ragdoll.pointCount && count < 96; i += 1) {
+      for (const ragdoll of ragdolls) {
+        for (let i = 0; i < ragdoll.pointCount && count < MAX_JOINTS; i += 1) {
           jointPositions[count * 3] = ragdoll.positions[i * 3] ?? 0;
           jointPositions[count * 3 + 1] = ragdoll.positions[i * 3 + 1] ?? 0;
           jointPositions[count * 3 + 2] = ragdoll.positions[i * 3 + 2] ?? 0;
           count += 1;
         }
       }
-      joints.update(jointPositions, count, 3, () => 0.22, () => 0.9);
+      joints.update(jointPositions, count, 3, JOINT_SIZE, JOINT_ALPHA);
     }
   }
 

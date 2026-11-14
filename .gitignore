@@ -10,3 +10,6 @@ dist/
 .idea/
 coverage/
 *.tgz
+
+# 地形工具临时产物
+packages/terrain/tools/.tmp/
