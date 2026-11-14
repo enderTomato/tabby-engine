@@ -13,6 +13,7 @@
     "build:demo": "pnpm --filter @tabby/demo build",
     "build": "pnpm build:pkgs && pnpm build:demo",
     "typecheck": "pnpm -r --filter \"./packages/*\" exec tsc -p tsconfig.json --noEmit",
+    "test": "pnpm -r --if-present test",
     "dev": "pnpm build:pkgs && pnpm --filter @tabby/demo dev",
     "preview": "pnpm --filter @tabby/demo preview",
     "pack:check": "pnpm -r --filter \"./packages/*\" exec npm pack --dry-run"
