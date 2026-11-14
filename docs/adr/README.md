@@ -70,3 +70,4 @@
 | [ADR-004](ADR-004-view-abstraction.md) | 视图抽象 | 引擎不感知 Three/Pixi，仅通过 ViewAdapter 调度 | 2026-11-14 | Accepted |
 | [ADR-005](ADR-005-package-split.md) | 包拆分粒度 | 在 11 包计划上拆出 worker/render2d/render3d/animation | 2026-11-14 | Accepted |
 | [ADR-006](ADR-006-liquid-route.md) | 液体实现路线 | 先做表现层粒子，地形落地后重构为双层 | 2026-11-14 | Accepted |
+| [ADR-007](ADR-007-economic-authority.md) | 格子归属的唯一真相 | 经济层实体池当真相，渲染侧只存投影缓存 + 一致性自检 | 2026-11-14 | Accepted |
