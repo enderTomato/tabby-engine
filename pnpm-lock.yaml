@@ -83,6 +83,16 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  packages/economy:
+    dependencies:
+      '@tabby/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
   packages/engine:
     dependencies:
       '@tabby/core':
