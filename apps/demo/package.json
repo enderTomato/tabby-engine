@@ -1,0 +1,31 @@
+{
+  "name": "@tabby/demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tabby Engine 测试用例：迷你模拟经营（2D）+ 物理试验场（3D）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173"
+  },
+  "dependencies": {
+    "@tabby/animation": "workspace:*",
+    "@tabby/core": "workspace:*",
+    "@tabby/engine": "workspace:*",
+    "@tabby/physics": "workspace:*",
+    "@tabby/platform": "workspace:*",
+    "@tabby/render2d": "workspace:*",
+    "@tabby/render3d": "workspace:*",
+    "@tabby/worker": "workspace:*",
+    "gsap": "^3.12.0",
+    "pixi.js": "^8.0.0",
+    "three": "^0.170.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  }
+}

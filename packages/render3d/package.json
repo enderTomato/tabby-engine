@@ -1,0 +1,38 @@
+{
+  "name": "@tabby/render3d",
+  "version": "0.1.0",
+  "description": "Tabby Engine 3D 渲染适配层（Three.js）：地形、实例化建筑、点精灵流体/烟雾、布娃娃骨架线",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tabby/core": "workspace:*",
+    "@tabby/engine": "workspace:*",
+    "@tabby/physics": "workspace:*",
+    "@tabby/platform": "workspace:*"
+  },
+  "peerDependencies": {
+    "three": ">=0.160.0"
+  },
+  "devDependencies": {
+    "three": "^0.170.0",
+    "@types/three": "^0.170.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@tabby/animation",
+  "version": "0.1.0",
+  "description": "Tabby Engine 动画适配层（GSAP）：由引擎主循环驱动 ticker，统一生命周期与时间缩放",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tabby/core": "workspace:*",
+    "@tabby/engine": "workspace:*",
+    "gsap": "^3.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
