@@ -47,6 +47,14 @@ export class PhysicsWorld {
 
   private readonly ragdolls = new Map<string, Ragdoll>();
   private readonly pendulums = new Map<string, Pendulum>();
+  /**
+   * 步进顺序用显式数组，不遍历 Map。
+   * JS 的 Map 虽然是插入序，但「依赖容器序」本身是确定性红线（P04 §7 / P18 §6）：
+   * 一旦有人为了释放内存先删再插，顺序就变了，存档回放会跨设备对不上。
+   * 数组顺序由本类显式维护，增删都可审计。
+   */
+  private readonly ragdollOrder: Ragdoll[] = [];
+  private readonly pendulumOrder: Pendulum[] = [];
   private readonly ragdollOptions: RagdollOptions;
   private lastStepMs = 0;
   private simulationTime = 0;
@@ -112,7 +120,7 @@ export class PhysicsWorld {
 
   spawnHumanoid(id: string, x: number, y: number, z: number, scale = 1): Ragdoll {
     const ragdoll = Ragdoll.humanoid(id, x, y, z, scale, this.ragdollOptions);
-    this.ragdolls.set(id, ragdoll);
+    this.attachRagdoll(id, ragdoll);
     return ragdoll;
   }
 
@@ -125,8 +133,21 @@ export class PhysicsWorld {
     segmentLength = 0.4,
   ): Ragdoll {
     const rope = Ragdoll.rope(id, x, y, z, segments, segmentLength, this.ragdollOptions);
-    this.ragdolls.set(id, rope);
+    this.attachRagdoll(id, rope);
     return rope;
+  }
+
+  /** 重复 id 覆盖旧实例，顺序位置保持不变（覆盖语义，不是重排）。 */
+  private attachRagdoll(id: string, ragdoll: Ragdoll): void {
+    const existing = this.ragdolls.get(id);
+    this.ragdolls.set(id, ragdoll);
+    if (existing === undefined) {
+      this.ragdollOrder.push(ragdoll);
+      return;
+    }
+    const at = this.ragdollOrder.indexOf(existing);
+    if (at >= 0) this.ragdollOrder[at] = ragdoll;
+    else this.ragdollOrder.push(ragdoll);
   }
 
   getRagdoll(id: string): Ragdoll | null {
@@ -134,7 +155,16 @@ export class PhysicsWorld {
   }
 
   removeRagdoll(id: string): void {
+    const existing = this.ragdolls.get(id);
+    if (existing === undefined) return;
     this.ragdolls.delete(id);
+    const at = this.ragdollOrder.indexOf(existing);
+    if (at >= 0) this.ragdollOrder.splice(at, 1);
+  }
+
+  /** 稳定步进顺序（渲染层遍历请用这个，不要遍历 Map）。 */
+  getRagdollOrder(): readonly Ragdoll[] {
+    return this.ragdollOrder;
   }
 
   getRagdolls(): ReadonlyMap<string, Ragdoll> {
@@ -143,8 +173,27 @@ export class PhysicsWorld {
 
   addPendulum(id: string, config: PendulumConfig): Pendulum {
     const pendulum = new Pendulum({ ...config, gravity: config.gravity ?? this.gravity });
+    const existing = this.pendulums.get(id);
     this.pendulums.set(id, pendulum);
+    if (existing === undefined) this.pendulumOrder.push(pendulum);
+    else {
+      const at = this.pendulumOrder.indexOf(existing);
+      if (at >= 0) this.pendulumOrder[at] = pendulum;
+      else this.pendulumOrder.push(pendulum);
+    }
     return pendulum;
+  }
+
+  removePendulum(id: string): void {
+    const existing = this.pendulums.get(id);
+    if (existing === undefined) return;
+    this.pendulums.delete(id);
+    const at = this.pendulumOrder.indexOf(existing);
+    if (at >= 0) this.pendulumOrder.splice(at, 1);
+  }
+
+  getPendulumOrder(): readonly Pendulum[] {
+    return this.pendulumOrder;
   }
 
   getPendulum(id: string): Pendulum | null {
@@ -158,11 +207,11 @@ export class PhysicsWorld {
   step(dt: number): void {
     const t0 = now();
     this.fluid?.step(dt, this.obstacles);
-    for (const ragdoll of this.ragdolls.values()) {
-      ragdoll.step(dt, this.obstacles);
+    for (let i = 0; i < this.ragdollOrder.length; i += 1) {
+      this.ragdollOrder[i]?.step(dt, this.obstacles);
     }
-    for (const pendulum of this.pendulums.values()) {
-      pendulum.step(dt);
+    for (let i = 0; i < this.pendulumOrder.length; i += 1) {
+      this.pendulumOrder[i]?.step(dt);
     }
     this.smoke.step(dt);
     this.simulationTime += dt;
@@ -182,7 +231,8 @@ export class PhysicsWorld {
 
   get elapsedSeconds(): number {
     return this.simulationTime;
-  }}
+  }
+}
 
 function now(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();

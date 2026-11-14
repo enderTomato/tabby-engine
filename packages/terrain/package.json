@@ -1,0 +1,29 @@
+{
+  "name": "@tabby/terrain",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "地形高程：.r16 自有格式、分块加载、双线性采样、法线与 LOD 派生",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "preprocess": "node tools/preprocess.mjs",
+    "verify": "node tools/verify.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

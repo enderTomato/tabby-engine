@@ -129,6 +129,12 @@ engine.bus.on('fixed', ({ dt }) => {
 
 控制台可读：`__tabby`（引擎实例）、`__tabby3d.debug()`（绘制规模）。
 
+## 架构决策
+
+不可逆决策记录在 [docs/adr/](docs/adr/README.md)，共 6 条：渲染混合、物理积分、线程模型、视图抽象、包拆分、液体路线。
+
+写 ADR 的判定标准、模板与索引见该目录 README。
+
 ## 部署
 
 COOP/COEP 是 SharedArrayBuffer 的硬前提，详见 [docs/ANDROID-DEPLOY.md](docs/ANDROID-DEPLOY.md)，含 Nginx / Vercel / Capacitor / WebView 四套配置。
