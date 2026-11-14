@@ -1,0 +1,37 @@
+{
+  "name": "@tabby/render2d",
+  "version": "0.1.0",
+  "description": "Tabby Engine 2D 渲染适配层（Pixi.js）：粒子批、建筑图层、网格高亮",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tabby/core": "workspace:*",
+    "@tabby/engine": "workspace:*",
+    "@tabby/physics": "workspace:*",
+    "@tabby/platform": "workspace:*"
+  },
+  "peerDependencies": {
+    "pixi.js": ">=8.0.0"
+  },
+  "devDependencies": {
+    "pixi.js": "^8.0.0",
+    "typescript": "^5.6.0"
+  }
+}

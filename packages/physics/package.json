@@ -1,0 +1,27 @@
+{
+  "name": "@tabby/physics",
+  "version": "0.1.0",
+  "description": "Tabby Engine 自研轻量物理：SPH-lite 流体、Verlet 布娃娃/绳索、解析摆、烟雾粒子。零渲染依赖，可在 Worker 内运行",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tabby/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
