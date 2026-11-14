@@ -170,6 +170,8 @@ export class CitySimulation {
   private lastReject = '';
   private irrigBuffer = 0;
   private earnedFromWater = 0;
+  /** 每多少单位吸收水折算一次收益（调试面板可改）。 */
+  private irrigUnit = IRRIGATION_UNIT;
   /** 最近一次物流受阻提示，UI 取走后清空。 */
   private blockedNotice = '';
   private streamer: ChunkStreamer | null = null;
@@ -325,8 +327,8 @@ export class CitySimulation {
     if (!(units > 0)) return 0;
     this.irrigBuffer += units;
     let earned = 0;
-    while (this.irrigBuffer >= IRRIGATION_UNIT) {
-      this.irrigBuffer -= IRRIGATION_UNIT;
+    while (this.irrigBuffer >= this.irrigUnit) {
+      this.irrigBuffer -= this.irrigUnit;
       // 金库已被钳制在 [0, 2e9]，满仓时 deposit 静默无效，这里不必再判
       this.economy.applyCommand({ type: 'deposit', city: this.city, amount: IRRIGATION_REWARD });
       earned += IRRIGATION_REWARD;
@@ -337,6 +339,20 @@ export class CitySimulation {
 
   get waterIncome(): number {
     return this.earnedFromWater;
+  }
+
+  get irrigationUnit(): number {
+    return this.irrigUnit;
+  }
+
+  /**
+   * 调整灌溉折算阈值。
+   *
+   * 改小等于直接印钱 —— 这是调试旋钮，不是玩法。下限 5 是「别让一帧的
+   * 水量换算成几十笔 deposit」的工程限制（每笔都是一次指令队列入队）。
+   */
+  setIrrigationUnit(units: number): void {
+    this.irrigUnit = Math.max(5, Math.round(units));
   }
 
   countOf(kind: CellKind): number {

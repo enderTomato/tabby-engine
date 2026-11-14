@@ -157,6 +157,20 @@ export class Economy {
     this.scheduler.setSpeed(speed);
   }
 
+  /**
+   * 一天折合多少真实毫秒（×1 速度下）。
+   *
+   * 调试面板与「快进」功能用。注意它改的是**每个 tick 的时长**，不是 dt ——
+   * 加速仍然靠 `setSpeed` 跑更多 tick，两者互不替代。
+   */
+  setMsPerDay(ms: number): void {
+    this.scheduler.setMsPerDay(ms);
+  }
+
+  get msPerDay(): number {
+    return this.scheduler.msPerDay;
+  }
+
   get backlog(): number {
     return this.scheduler.backlog;
   }

@@ -23,6 +23,7 @@ import {
 } from './game/city';
 import { CitySimulation, TOOLS, TOOL_LABEL, costOf, type ToolKind } from './game/simulation';
 import { configHost } from './game/config-loader';
+import { KNOBS } from './game/debug';
 import { HUB_TILE } from './game/logistics';
 import { indexOf } from './game/city';
 
@@ -66,6 +67,30 @@ const hud = reactive({ ...sim.hud() });
 
 /** 配置表状态（热重载 / 覆盖表校验结果），直接显示在诊断面板里。 */
 const configStatus = ref('内置配置表');
+
+/**
+ * 调参面板的当前值。
+ *
+ * 这是**唯一允许存副本**的地方：滑块需要双向绑定，而真实值散在
+ * Economy / CityLogistics / CitySimulation 三处。`syncKnobs()` 会从世界里重读，
+ * 所以读档、热重载、外部改参数之后调一次即可，不必担心面板撒谎。
+ */
+const knobValues = reactive<Record<string, number>>({});
+const knobFeedbacks = reactive<Record<string, string>>({});
+
+function syncKnobs(): void {
+  for (const knob of KNOBS) knobValues[knob.id] = knob.read(sim);
+}
+
+function applyKnob(id: string, value: number): void {
+  const knob = KNOBS.find((item) => item.id === id);
+  if (knob === undefined) return;
+  const ok = knob.write(sim, value);
+  // 无论成功与否都从世界重读：写失败时滑块要弹回真实值，而不是停在假值上
+  knobValues[id] = knob.read(sim);
+  knobFeedbacks[id] = ok ? '' : '未生效（可能被内核钳制）';
+  refreshHud();
+}
 
 /** 分块流式加载的统计。 */
 const streamStats = reactive({ enabled: false, resident: 0, total: 0, loads: 0, unloads: 0 });
@@ -123,6 +148,10 @@ function refreshHud(): void {
 
   Object.assign(streamStats, sim.streamStats());
   refreshLabelText();
+  // 速度可能被按钮改过；每 10Hz 对齐一次滑块，避免面板与真实状态漂移
+  if (showDiag.value) {
+    for (const knob of KNOBS) knobValues[knob.id] = knob.read(sim);
+  }
 }
 
 /** 把元素内坐标（CSS 像素）转成格子。InputManager 给的坐标已经是元素内坐标。 */
@@ -413,6 +442,7 @@ function setMode(next: '2d' | '3d'): void {
 function setSpeed(next: 1 | 2 | 4): void {
   speed.value = next;
   sim.setSpeed(next);
+  knobValues.speed = next;
 }
 
 /** 每固定步调用：水塔出水、烟囱冒烟、灌溉结算、经济结算。 */
@@ -586,6 +616,7 @@ function restartWorld(): void {
   next.beginStreaming();
   Object.assign(hud, next.hud());
   streamStats.enabled = true;
+  syncKnobs();
   syncCity();
   refreshHud();
   flash('世界已按当前配置表重建');
@@ -667,6 +698,7 @@ onMounted(async () => {
   sim.setSpeed(speed.value);
   sim.beginStreaming();
   streamStats.enabled = true;
+  syncKnobs();
   syncCity();
   refreshHud();
   sim.minimap.invalidate();
@@ -814,6 +846,22 @@ onBeforeUnmount(() => {
       <div class="diag-actions">
         <button type="button" @click="reloadConfig">重读配置表</button>
         <button type="button" @click="restartWorld">重建世界</button>
+        <button type="button" @click="syncKnobs">重读参数</button>
+      </div>
+      <div class="knobs">
+        <label v-for="knob in KNOBS" :key="knob.id" :title="knob.hint">
+          <span class="knob-name">{{ knob.label }}</span>
+          <input
+            type="range"
+            :min="knob.min"
+            :max="knob.max"
+            :step="knob.step"
+            :value="knobValues[knob.id] ?? knob.min"
+            @input="applyKnob(knob.id, Number(($event.target as HTMLInputElement).value))"
+          />
+          <b>{{ knob.format(knobValues[knob.id] ?? knob.min) }}</b>
+          <em v-if="knobFeedbacks[knob.id]">{{ knobFeedbacks[knob.id] }}</em>
+        </label>
       </div>
       <pre>{{ diagText || '采集中…' }}</pre>
     </aside>

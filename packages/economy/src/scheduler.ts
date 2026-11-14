@@ -57,6 +57,10 @@ export class TickScheduler {
     this.dayMillis = Math.max(16, ms);
   }
 
+  get msPerDay(): number {
+    return this.dayMillis;
+  }
+
   /** 已积累但还没结算的 tick 数，用于诊断条（"慢了多少天"）。 */
   get backlog(): number {
     return Math.floor(this.accumulatorMicros / (this.dayMillis * 1000));

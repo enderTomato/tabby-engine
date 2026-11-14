@@ -133,8 +133,8 @@ export class CityLogistics implements EfficiencyLogisticsProvider {
   readonly tiles: TileLogistics;
   cities: number;
 
-  private readonly freeDistance: number;
-  private readonly zeroDistance: number;
+  private freeDistance: number;
+  private zeroDistance: number;
   private readonly unboundEfficiency: number;
 
   /** `city → hub tile`，-1 表示该城市没有枢纽。 */
@@ -181,6 +181,26 @@ export class CityLogistics implements EfficiencyLogisticsProvider {
   /** 真正跑了路径计算的次数，诊断用。命中缓存时不增加。 */
   get missCount(): number {
     return this.misses;
+  }
+
+  /**
+   * 调整效率曲线的两个拐点。
+   *
+   * 这是**玩法调参**接口（调试面板、难度选项），不是性能旋钮。
+   * 改完必须让效率缓存作废，否则已经算过的建筑会继续用旧曲线 ——
+   * 症状是「调了参数，只有新盖的楼生效」。
+   */
+  setCurve(freeDistance: number, zeroDistance: number): void {
+    const free = Math.max(0, freeDistance);
+    const zero = Math.max(free + 1, zeroDistance);
+    if (free === this.freeDistance && zero === this.zeroDistance) return;
+    this.freeDistance = free;
+    this.zeroDistance = zero;
+    this.invalidate();
+  }
+
+  get curve(): { readonly freeDistance: number; readonly zeroDistance: number } {
+    return { freeDistance: this.freeDistance, zeroDistance: this.zeroDistance };
   }
 
   /** 设置城市的枢纽地块。 */
