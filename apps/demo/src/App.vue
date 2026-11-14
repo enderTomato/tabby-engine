@@ -3,7 +3,8 @@ import { AnimationSystem } from '@tabby/animation';
 import { Engine } from '@tabby/engine';
 import type { PhysicsBounds } from '@tabby/physics';
 import { Renderer2DView, type BoxSpec } from '@tabby/render2d';
-import { Renderer3DView, type Box3DSpec } from '@tabby/render3d';
+import { RenderBridge, Renderer3DView, type Box3DSpec, type OccluderBox } from '@tabby/render3d';
+import { InputManager } from '@tabby/input';
 import { gsap } from 'gsap';
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import {
@@ -43,6 +44,8 @@ const canvas2d = ref<HTMLCanvasElement | null>(null);
 const canvas3d = ref<HTMLCanvasElement | null>(null);
 /** 小地图。像素数据在 `sim.minimap` 里，这里只是一块放大显示的画布。 */
 const minimapEl = ref<HTMLCanvasElement | null>(null);
+/** 3D 模式下的浮动标签层（建筑名 + 物流效率），由 RenderBridge 定位。 */
+const overlayEl = ref<HTMLDivElement | null>(null);
 
 const mode = ref<'2d' | '3d'>('2d');
 const tool = ref<ToolKind>('house');
@@ -119,26 +122,22 @@ function refreshHud(): void {
   if (notice !== '') flash(notice);
 
   Object.assign(streamStats, sim.streamStats());
+  refreshLabelText();
 }
 
-function cellFromPointer(event: PointerEvent): { col: number; row: number } | null {
-  if (view2d === null || canvas2d.value === null) return null;
-  const rect = canvas2d.value.getBoundingClientRect();
-  const world = view2d.screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+/** 把元素内坐标（CSS 像素）转成格子。InputManager 给的坐标已经是元素内坐标。 */
+function cellAtPoint(x: number, y: number): { col: number; row: number } | null {
+  if (view2d === null) return null;
+  const world = view2d.screenToWorld(x, y);
   return cellFromWorld(world.x, world.y);
 }
 
-function onPointerMove2D(event: PointerEvent): void {
+function highlightCell(col: number, row: number): void {
   if (view2d === null) return;
-  const cell = cellFromPointer(event);
-  if (cell === null) {
-    view2d.setHighlight(null);
-    return;
-  }
   // 流式加载的焦点跟着指针：走到哪儿，附近哪几块常驻
-  sim.focusAt(indexOf(cell.col, cell.row));
-  const rect = cellRect(cell.col, cell.row);
-  const occupied = sim.cellAt(cell.col, cell.row) !== 0;
+  sim.focusAt(indexOf(col, row));
+  const rect = cellRect(col, row);
+  const occupied = sim.cellAt(col, row) !== 0;
   view2d.setHighlight({
     x: rect.x,
     y: rect.y,
@@ -148,25 +147,24 @@ function onPointerMove2D(event: PointerEvent): void {
   });
 }
 
-function onPointerDown2D(event: PointerEvent): void {
-  const cell = cellFromPointer(event);
-  if (cell === null) return;
-  const result = sim.build(cell.col, cell.row, tool.value);
+function buildAt(col: number, row: number): void {
+  const result = sim.build(col, row, tool.value);
   flash(result.message);
   if (!result.ok) return;
   refreshHud();
   syncCity();
 }
 
-function onPointerDown3D(event: PointerEvent): void {
-  if (engine === null || view3d === null) return;
-  const rect = canvas3d.value?.getBoundingClientRect();
-  if (rect === undefined) return;
-  const nx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-  const nz = ((event.clientY - rect.top) / rect.height) * 2 - 1;
-  // 限制在物理世界内（z 边界 ±6），否则布娃娃会生成在界外直接掉出去
-  const x = nx * 12;
-  const z = nz * 5;
+/**
+ * 3D 里丢一个布娃娃。
+ *
+ * 坐标从 NDC 换算，并夹在物理世界边界内（z 边界 ±6）——
+ * 否则拖到画面边缘松手时，布娃娃会生成在界外直接掉出去，看起来像"没生成"。
+ */
+function dropRagdoll(ndcX: number, ndcZ: number): void {
+  if (engine === null) return;
+  const x = Math.max(-12, Math.min(12, ndcX * 12));
+  const z = Math.max(-5, Math.min(5, ndcZ * 5));
   ragdollSeq += 1;
   const id = `rag-${ragdollSeq}`;
   const ragdoll = engine.world.spawnHumanoid(id, x, 12, z, 1);
@@ -178,6 +176,22 @@ function onPointerDown3D(event: PointerEvent): void {
   }
   flash('放了一个布娃娃');
 }
+
+/** 双指捏合的起始间距。用它算 scale，比累乘每帧比值稳定。 */
+let pinchBase = 0;
+
+let input2d: InputManager | null = null;
+let input3d: InputManager | null = null;
+
+/**
+ * 3D 浮动标签桥。
+ *
+ * 每帧把建筑的头顶坐标投影成屏幕坐标，再直接写 DOM 的 `transform`
+ * （不进 Vue 响应式：20 个标签 × 60fps 的响应式更新会把 CPU 预算吃光）。
+ */
+const renderBridge = new RenderBridge({ minSeparation: 46, occlusionBias: 0.4 });
+const labelPool: HTMLDivElement[] = [];
+let labelSyncCount = 0;
 
 function drawBox2D(spec: BoxSpec): void {
   view2d?.upsertBox(`${spec.x.toFixed(2)}:${spec.y.toFixed(2)}`, spec);
@@ -227,6 +241,163 @@ function syncCity(): void {
   }
   view3d.setBoxes(specs3d);
   prevZones = new Array<number>(zones.length).fill(0);
+  syncLabelsAndOccluders();
+}
+
+/**
+ * 重建浮动标签与遮挡体。
+ *
+ * 只在城市变化时重建（建造/拆除/读档），不是每帧：标签内容是"这栋楼的物流效率"，
+ * 而效率一天才变一次 —— 每帧重建等于每帧做 20 次图查询。
+ * 数字更新由 `refreshLabelText()` 在 HUD 刷新（10Hz）时完成。
+ */
+function syncLabelsAndOccluders(): void {
+  renderBridge.clearLabels();
+  const occluders: OccluderBox[] = [];
+  for (let row = 0; row < GRID_ROWS; row += 1) {
+    const z = zSpanOf(row);
+    for (let col = 0; col < GRID_COLS; col += 1) {
+      const kind = sim.cellAt(col, row);
+      if (kind === 0) continue;
+      const rect = cellRect(col, row);
+      const height = CELL_HEIGHT[kind] ?? CELL_SIZE;
+      occluders.push({
+        minX: rect.x,
+        minY: 0,
+        minZ: z.min,
+        maxX: rect.x + rect.width,
+        maxY: height,
+        maxZ: z.max,
+      });
+      if (kind === 1) {
+        // 只有住宅挂名字牌；农田挂"效率"牌（它的产出受物流影响）
+        renderBridge.addLabel({
+          id: `house-${col}-${row}`,
+          x: rect.x + rect.width / 2,
+          y: height + 0.9,
+          z: (z.min + z.max) / 2,
+          kind: 'house',
+          priority: 1,
+        });
+      } else if (kind === 2) {
+        renderBridge.addLabel({
+          id: `farm-${col}-${row}`,
+          x: rect.x + rect.width / 2,
+          y: height + 1.2,
+          z: (z.min + z.max) / 2,
+          kind: 'farm',
+          priority: 2,
+        });
+      }
+    }
+  }
+  renderBridge.setOccluders(occluders);
+  refreshLabelText();
+}
+
+/** 更新标签文字（10Hz 跟随 HUD，不进每帧路径）。 */
+function refreshLabelText(): void {
+  const labels = renderBridge.labels;
+  for (let i = 0; i < labels.length; i += 1) {
+    const label = labels[i];
+    const el = labelPool[i];
+    if (label === undefined || el === undefined) continue;
+    const id = label.id;
+    if (id.startsWith('farm-')) {
+      const [col, row] = id.slice(5).split('-').map(Number) as [number, number];
+      const entity = sim.entityOfTile(indexOf(col, row));
+      const eff = entity >= 0 ? sim.roads.logistics.efficiencyOf(entity, sim.city) : 1;
+      el.dataset.text = eff <= 0.01 ? '断供' : `效率 ${Math.round(eff * 100)}%`;
+      el.classList.toggle('bad', eff <= 0.01);
+    } else {
+      el.dataset.text = '住宅';
+      el.classList.remove('bad');
+    }
+  }
+}
+
+/**
+ * 输入接线。
+ *
+ * 2D 与 3D 各一个 `InputManager`：两个 canvas 叠在同一位置，但手势语义完全不同
+ * （2D 是"点格子"，3D 是"转相机"）。共用一个会让「3D 里拖动」在 2D 层也触发点击。
+ *
+ * 2D 用 `longpress` 做拆除：既省一个工具栏状态，又顺便验证长按识别。
+ */
+function bindInput(): void {
+  if (canvas2d.value === null || canvas3d.value === null) return;
+
+  input2d = new InputManager(canvas2d.value);
+  input2d.on((event) => {
+    if (event.kind === 'move') {
+      const cell = cellAtPoint(event.sample.x, event.sample.y);
+      if (cell === null) view2d?.setHighlight(null);
+      else highlightCell(cell.col, cell.row);
+      return;
+    }
+    if (event.kind === 'tap' && mode.value === '2d') {
+      const cell = cellAtPoint(event.data.x, event.data.y);
+      if (cell !== null) buildAt(cell.col, cell.row);
+      return;
+    }
+    if (event.kind === 'longpress' && mode.value === '2d') {
+      // 长按拆除：与工具栏的「拆除」等价，但少一次点击
+      const cell = cellAtPoint(event.data.x, event.data.y);
+      if (cell !== null && sim.cellAt(cell.col, cell.row) !== 0) {
+        const result = sim.build(cell.col, cell.row, 'remove');
+        flash(result.message);
+        if (result.ok) {
+          refreshHud();
+          syncCity();
+        }
+      }
+    }
+  });
+
+  input3d = new InputManager(canvas3d.value);
+  const orbit = view3d?.orbitController;
+  input3d.on((event) => {
+    const driver = orbit?.orbitDriver;
+    if (driver === undefined) return;
+    switch (event.kind) {
+      case 'tap':
+        // 点击丢布娃娃：只有真正的点（没拖动过）才触发，否则转相机会顺手丢一堆
+        if (mode.value === '3d' && canvas3d.value !== null) {
+          const rect = canvas3d.value.getBoundingClientRect();
+          const nx = (event.data.x / rect.width) * 2 - 1;
+          const nz = (event.data.y / rect.height) * 2 - 1;
+          dropRagdoll(nx, nz);
+        }
+        break;
+      case 'dragstart':
+        driver.stop(); // 抓住画面：先停住惯性
+        break;
+      case 'drag':
+        driver.drag(event.data.dx, event.data.dy);
+        break;
+      case 'dragend':
+        // 松手时把速度交给 driver 开惯性；帧率无关的衰减在 OrbitDriver 里
+        driver.release(event.data.vx, event.data.vy);
+        break;
+      case 'pinchstart':
+        pinchBase = event.data.distance;
+        break;
+      case 'pinch':
+        driver.pinch(pinchBase > 0 ? event.data.distance / pinchBase : 1, driver.state.distance);
+        break;
+      case 'rotate':
+        driver.twist(event.data.delta);
+        break;
+      case 'pan2':
+        driver.pan(event.data.dx, event.data.dy);
+        break;
+      case 'wheel':
+        driver.wheel(event.data.deltaY);
+        break;
+      default:
+        break;
+    }
+  });
 }
 
 function setMode(next: '2d' | '3d'): void {
@@ -302,6 +473,45 @@ function onFixed(dt: number): void {
   }
 }
 
+/**
+ * 刷新 3D 浮动标签。
+ *
+ * 遮挡判定用「相机 → 标签」射线与建筑 AABB 求交（在 `RenderBridge` 里）。
+ * 这是 3D UI 最容易穿帮的地方：被楼挡住的血条照样画在楼前面。
+ */
+function syncLabels(): void {
+  const host = overlayEl.value;
+  if (host === null || view3d === null) return;
+  const matrices = view3d.cameraMatrices;
+  if (matrices === null) {
+    host.style.display = 'none';
+    return;
+  }
+  host.style.display = mode.value === '3d' ? '' : 'none';
+  if (mode.value !== '3d') return;
+
+  const labels = renderBridge.update(matrices, { width: host.clientWidth, height: host.clientHeight });
+  while (labelPool.length < labels.length) {
+    const el = document.createElement('div');
+    el.className = 'float-label';
+    host.appendChild(el);
+    labelPool.push(el);
+  }
+  for (let i = 0; i < labelPool.length; i += 1) {
+    const el = labelPool[i] as HTMLDivElement;
+    const label = labels[i];
+    if (label === undefined || !label.visible) {
+      el.style.display = 'none';
+      continue;
+    }
+    el.style.display = '';
+    // 先缩放再位移：transform 的顺序会影响结果，缩放放在左边才是"以自身为原点放大"
+    el.style.transform = `translate3d(${label.x.toFixed(1)}px, ${label.y.toFixed(1)}px, 0) scale(${label.scale.toFixed(2)})`;
+    el.textContent = el.dataset.text ?? '';
+  }
+  labelSyncCount += 1;
+}
+
 function onFrame(): void {
   if (engine === null) return;
   frameCounter += 1;
@@ -317,6 +527,7 @@ function onFrame(): void {
   stats.tier = engine.tier;
   sim.streamStep();
   refreshHud();
+  syncLabels();
   if (showDiag.value) diagText.value = collectDiagnostics();
 }
 
@@ -408,7 +619,8 @@ onMounted(async () => {
   if (canvas2d.value === null || canvas3d.value === null || stageEl.value === null) return;
 
   view2d = new Renderer2DView({ canvas: canvas2d.value });
-  view3d = new Renderer3DView({ canvas: canvas3d.value });
+  // 输入统一由 @tabby/input 的 InputManager 处理，视图不能再自己绑一份
+  view3d = new Renderer3DView({ canvas: canvas3d.value, manageInput: false });
 
   engine = await Engine.create({
     bounds: BOUNDS,
@@ -467,9 +679,7 @@ onMounted(async () => {
     ? `配置：${loaded.source === 'override' ? '覆盖表' : '内置表'} · ${loaded.message}`
     : `配置校验失败（保留旧表）\n${loaded.message}`;
 
-  canvas2d.value.addEventListener('pointermove', onPointerMove2D);
-  canvas2d.value.addEventListener('pointerdown', onPointerDown2D);
-  canvas3d.value.addEventListener('pointerdown', onPointerDown3D);
+  bindInput();
 
   resizeObserver = new ResizeObserver((entries) => {
     const entry = entries[0];
@@ -491,9 +701,10 @@ onBeforeUnmount(() => {
   unsubscribeConfig();
   resizeObserver?.disconnect();
   resizeObserver = null;
-  canvas2d.value?.removeEventListener('pointermove', onPointerMove2D);
-  canvas2d.value?.removeEventListener('pointerdown', onPointerDown2D);
-  canvas3d.value?.removeEventListener('pointerdown', onPointerDown3D);
+  input2d?.dispose();
+  input3d?.dispose();
+  input2d = null;
+  input3d = null;
   animation.dispose();
   (window as unknown as { __tabby?: Engine }).__tabby = undefined;
   engine?.dispose();
@@ -529,6 +740,7 @@ onBeforeUnmount(() => {
     <main class="stage-wrap">
       <div ref="stageEl" class="stage">
         <canvas ref="canvas3d" class="layer" :class="{ visible: mode === '3d' }" />
+        <div ref="overlayEl" class="label-layer" />
         <canvas ref="canvas2d" class="layer" :class="{ visible: mode === '2d' }" />
         <div class="mode-switch">
           <button type="button" :class="{ on: mode === '2d' }" @click="setMode('2d')">2D 经营</button>

@@ -1,0 +1,27 @@
+{
+  "name": "@tabby/input",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "统一输入层：指针/手势识别、44px 热区、触感反馈能力探测、轨道相机阻尼惯性",
+  "license": "MPL-2.0",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

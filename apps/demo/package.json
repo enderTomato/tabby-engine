@@ -16,6 +16,7 @@
     "@tabby/economy": "workspace:*",
     "@tabby/engine": "workspace:*",
     "@tabby/graph": "workspace:*",
+    "@tabby/input": "workspace:*",
     "@tabby/physics": "workspace:*",
     "@tabby/platform": "workspace:*",
     "@tabby/render2d": "workspace:*",

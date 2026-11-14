@@ -29,6 +29,9 @@ importers:
       '@tabby/graph':
         specifier: workspace:*
         version: link:../../packages/graph
+      '@tabby/input':
+        specifier: workspace:*
+        version: link:../../packages/input
       '@tabby/physics':
         specifier: workspace:*
         version: link:../../packages/physics
@@ -127,6 +130,12 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  packages/input:
+    devDependencies:
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
   packages/physics:
     dependencies:
       '@tabby/core':
@@ -180,6 +189,9 @@ importers:
       '@tabby/engine':
         specifier: workspace:*
         version: link:../engine
+      '@tabby/input':
+        specifier: workspace:*
+        version: link:../input
       '@tabby/physics':
         specifier: workspace:*
         version: link:../physics

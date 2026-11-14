@@ -31,6 +31,13 @@ export interface SpinnerSpec {
 export interface Renderer3DViewOptions {
   readonly canvas: HTMLCanvasElement;
   readonly background?: number;
+  /**
+   * 是否让视图自己绑拖拽/滚轮事件。默认 true。
+   *
+   * 用 `@tabby/input` 的 `InputManager` 统一处理输入时必须传 false：
+   * 两套都绑会让同一只手势被处理两遍。
+   */
+  readonly manageInput?: boolean;
 }
 
 const MAX_RAGDOLL_VERTS = 6 * 40 * 2;
@@ -56,6 +63,7 @@ export class Renderer3DView implements ViewAdapter {
 
   private readonly canvas: HTMLCanvasElement;
   private readonly background: number;
+  private readonly options: Renderer3DViewOptions;
   private renderer: THREE.WebGLRenderer | null = null;
   private scene: THREE.Scene | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
@@ -91,6 +99,7 @@ export class Renderer3DView implements ViewAdapter {
   constructor(options: Renderer3DViewOptions) {
     this.canvas = options.canvas;
     this.background = options.background ?? 0x070b14;
+    this.options = options;
   }
 
   async attach(context: ViewContext): Promise<void> {
@@ -184,7 +193,7 @@ export class Renderer3DView implements ViewAdapter {
     });
     scene.add(this.ragdollJoints.object);
 
-    this.orbit = new OrbitController(this.canvas);
+    this.orbit = new OrbitController(this.canvas, { manageInput: this.options.manageInput });
     this.resize(this.cssWidth, this.cssHeight, context.caps.devicePixelRatio);
   }
 
@@ -206,12 +215,42 @@ export class Renderer3DView implements ViewAdapter {
     this.ragdollJoints?.setSizeScale(sizeScale);
   }
 
+  /**
+   * 轨道相机。集成 `@tabby/input` 时把 `InputManager` 的手势喂给
+   * `orbitController.orbitDriver`，并确保视图不再自己绑事件（`manageInput: false`）。
+   */
+  get orbitController(): OrbitController | null {
+    return this.orbit;
+  }
+
+  /**
+   * 当前相机矩阵，供 `RenderBridge` 做世界→屏幕投影。
+   *
+   * 返回值里的数组是 **three 的内部缓冲区**（每帧被覆写），需要保留请自己 copy。
+   * 这么做是为了让这条路径零分配：投影每帧都要算一次，复制 32 个 float 也是分配。
+   */
+  get cameraMatrices(): {
+    readonly projection: Float32Array;
+    readonly view: Float32Array;
+    readonly eye: { readonly x: number; readonly y: number; readonly z: number };
+  } | null {
+    const camera = this.camera;
+    if (camera === null) return null;
+    camera.updateMatrixWorld();
+    return {
+      projection: camera.projectionMatrix.elements as unknown as Float32Array,
+      view: camera.matrixWorldInverse.elements as unknown as Float32Array,
+      eye: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+    };
+  }
+
   render(frame: ViewFrame): void {
-    void frame;
     if (!this.active) return;
     const { renderer, scene, camera, engine } = this;
     if (renderer === null || scene === null || camera === null || engine === null) return;
 
+    // 惯性要用真实时间差，不能用固定步长（见 OrbitController.update 注释）
+    this.orbit?.update(performance.now());
     this.updateFluid(engine);
     this.updateSmoke(engine);
     this.updateRagdolls(engine, frame.alpha);
